@@ -63,7 +63,7 @@ def export_to_onnx(model: TemporalCNN, output_path: str,
         dummy_input,
         output_path,
         export_params=True,
-        opset_version=13,
+        opset_version=16,  # Zwiększono z 13 dla lepszej kompatybilności
         do_constant_folding=True,
         input_names=["input"],
         output_names=["output"],
@@ -77,41 +77,59 @@ def export_to_onnx(model: TemporalCNN, output_path: str,
 
 def convert_onnx_to_tflite(onnx_path: str, tflite_path: str, quantize: bool = False):
     """
-    Konwertuje ONNX → TF SavedModel → TFLite.
+    Konwertuje ONNX → TFLite używając onnx2tf.
     """
-    import onnx
-    from onnx_tf.backend import prepare
-    import tensorflow as tf
+    import subprocess
+    import shutil
 
-    onnx_model = onnx.load(onnx_path)
-    onnx.checker.check_model(onnx_model)
+    print(f"🔄 Konwersja ONNX → TFLite przy użyciu onnx2tf...")
+    
+    output_dir = onnx_path.replace(".onnx", "_tflite_tmp")
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
 
-    tf_rep = prepare(onnx_model)
-    savedmodel_dir = onnx_path.replace(".onnx", "_savedmodel")
-    tf_rep.export_graph(savedmodel_dir)
-    print(f"✅ TF SavedModel: {savedmodel_dir}")
+    # Budowanie komendy onnx2tf
+    cmd = [
+        sys.executable, "-m", "onnx2tf",
+        "-i", onnx_path,
+        "-o", output_dir,
+        "--non_verbose"
+    ]
 
-    converter = tf.lite.TFLiteConverter.from_saved_model(savedmodel_dir)
+    try:
+        subprocess.run(cmd, check=True)
+        
+        # onnx2tf zapisuje wynik z różnymi przyrostkami w output_dir
+        base = os.path.basename(onnx_path).replace('.onnx', '')
+        possible_names = [
+            f"{base}_float32.tflite",
+            f"{base}_float16.tflite",
+            f"{base}.tflite",
+            "model.tflite"
+        ]
+        
+        generated_tflite = None
+        for name in possible_names:
+            path = os.path.join(output_dir, name)
+            if os.path.exists(path):
+                generated_tflite = path
+                break
 
-    if quantize:
-        print("🔧 Kwantyzacja INT8...")
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        converter.target_spec.supported_types = [tf.int8]
-
-        def representative_dataset():
-            for _ in range(100):
-                data = np.random.randn(1, INPUT_CHANNELS, SEQUENCE_LENGTH).astype(np.float32)
-                yield [data]
-
-        converter.representative_dataset = representative_dataset
-
-    tflite_model = converter.convert()
-
-    with open(tflite_path, "wb") as f:
-        f.write(tflite_model)
-
-    file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
-    print(f"✅ TFLite zapisany: {tflite_path} ({file_size_mb:.2f} MB)")
+        if generated_tflite and os.path.exists(generated_tflite):
+            shutil.copy2(generated_tflite, tflite_path)
+            # shutil.rmtree(output_dir) # Opcjonalnie
+            
+            file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
+            print(f"✅ TFLite zapisany: {tflite_path} ({file_size_mb:.2f} MB)")
+        else:
+            print(f"❌ Nie znaleziono wygenerowanego pliku TFLite w {output_dir}")
+            print(f"   Szukano: {possible_names}")
+            
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Błąd onnx2tf: {e}")
+        print("Upewnij się, że masz zainstalowane onnx2tf: pip install onnx2tf")
+    except Exception as e:
+        print(f"❌ Wystąpił błąd podczas konwersji: {e}")
 
 
 def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
@@ -124,8 +142,17 @@ def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
     output_details = interpreter.get_output_details()
 
     test_input = np.random.randn(1, INPUT_CHANNELS, SEQUENCE_LENGTH).astype(np.float32)
+    
+    # Sprawdź kształt wejścia TFLite
+    expected_shape = input_details[0]["shape"]
+    tflite_input = test_input
+    
+    # Jeśli onnx2tf przetransponował kanały (częste przy konwersji do TF/TFLite)
+    if expected_shape[1] == SEQUENCE_LENGTH and expected_shape[2] == INPUT_CHANNELS:
+        print(f"   ℹ️ Transponowanie wejścia: (1, 63, 30) → (1, 30, 63) dla TFLite")
+        tflite_input = np.transpose(test_input, (0, 2, 1))
 
-    interpreter.set_tensor(input_details[0]["index"], test_input)
+    interpreter.set_tensor(input_details[0]["index"], tflite_input)
     interpreter.invoke()
     tflite_output = interpreter.get_tensor(output_details[0]["index"])
 

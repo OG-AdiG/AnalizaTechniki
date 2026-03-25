@@ -255,6 +255,62 @@ EXERCISE_CLASSES = {
             "down_threshold": 100,
         },
     },
+
+    # -------------------------------------------------------
+    # PODCIĄGANIE NACHWYTEM (PULL-UP OVERHAND)
+    # -------------------------------------------------------
+    "pullup_overhand": {
+        "labels": {
+            0: "correct",
+            1: "partial_rom_top",     # Broda nie dochodzi do drążka (tylko zgięcie łokci)
+            2: "kipping",             # Kołysanie ciałem / momentum
+            3: "chicken_neck",        # Naciąganie głowy żeby dać nad drążek
+            4: "partial_rom_bottom",  # Brak prostowania rąk w dolnej fazie
+            5: "asymmetric_pull",     # Jedna ręka ciągnie bardziej niż druga
+        },
+        "num_classes": 6,
+
+        "key_landmarks": {
+            "nose": 0,
+            "left_ear": 1,       "right_ear": 2,
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_top": (30, 80),       # Na górze — łokcie zgięte
+                "correct_range_bottom": (160, 180),   # Na dole — ramiona proste
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_top": (140, 180),
+                "error_name": "łokcie zbyt szeroko/wąsko",
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "ankle"),
+                "correct_range": (160, 180),
+                "error_name": "kipping / kołysanie ciałem",
+            },
+            "neck_extension": {
+                "joints": ("sternum", "nose", "left_ear"),
+                "correct_range": (140, 180),
+                "error_name": "naciąganie głowy (chicken neck)",
+            },
+        },
+
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 80,      # Łokcie zgięte = góra
+            "down_threshold": 150,   # Łokcie proste = dół
+        },
+    },
 }
 
 # Aktywne ćwiczenie (domyślnie)

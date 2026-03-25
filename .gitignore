@@ -31,3 +31,5 @@ Thumbs.db
 
 # OS / misc
 *.swp
+
+models/
