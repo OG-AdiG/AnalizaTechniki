@@ -188,14 +188,18 @@ def main():
                 # Uruchom model TFLite
                 interpreter.set_tensor(input_details[0]['index'], model_input)
                 interpreter.invoke()
-                outputs = interpreter.get_tensor(output_details[0]['index'])[0]
+                logits = interpreter.get_tensor(output_details[0]['index'])[0]
 
-                # Pobierz predykcję (Softmax bo TCN zwraca "czyste" logity/prawdopodobieństwa)
-                pred_idx = np.argmax(outputs)
-                confidence = outputs[pred_idx]
+                # Softmax (zamiana logitów na prawdopodobieństwa 0-1)
+                exp_logits = np.exp(logits - np.max(logits)) # stabilność numeryczna
+                probs = exp_logits / exp_logits.sum()
+
+                # Pobierz predykcję
+                pred_idx = np.argmax(probs)
+                confidence = probs[pred_idx]
                 
                 # Pomiń jak mała pewność
-                if confidence > 0.6:
+                if confidence > 0.4:  # Obniżono próg z 0.6 bo po softmaxie są "uczciwsze" wyniki
                     pred_class = classes[pred_idx]
                     
                     if pred_class == "correct":
