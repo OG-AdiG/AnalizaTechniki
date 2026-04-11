@@ -231,7 +231,7 @@ class ExerciseAngleAnalyzer:
 
 if __name__ == "__main__":
     # Test z losowymi danymi — 3 ćwiczenia
-    for exercise in ["squat", "pushup", "lunge"]:
+    for exercise in ["pullup_overhand", "pushup"]:
         print(f"\n{'='*50}")
         print(f"TEST: {exercise.upper()}")
         print(f"{'='*50}")

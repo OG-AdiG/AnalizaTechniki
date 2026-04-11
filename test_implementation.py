@@ -1,6 +1,7 @@
 """Test script to verify the implementation."""
 import sys
 import os
+sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 print("=" * 60)
@@ -23,7 +24,14 @@ assert NUM_KEYPOINTS == 21, f"Expected 21, got {NUM_KEYPOINTS}"
 assert KEYPOINT_DIMS == 3, f"Expected 3, got {KEYPOINT_DIMS}"
 assert INPUT_CHANNELS == 63, f"Expected 63, got {INPUT_CHANNELS}"
 assert SEQUENCE_LENGTH == 30, f"Expected 30, got {SEQUENCE_LENGTH}"
-assert len(EXERCISE_CLASSES) == 3, f"Expected 3 exercises"
+assert len(EXERCISE_CLASSES) == 2, f"Expected 2 exercises, got {len(EXERCISE_CLASSES)}"
+assert "pullup_overhand" in EXERCISE_CLASSES, "Missing pullup_overhand"
+assert "pushup" in EXERCISE_CLASSES, "Missing pushup"
+assert EXERCISE_CLASSES["pullup_overhand"]["num_classes"] == 7, "pullup_overhand should have 7 classes"
+assert EXERCISE_CLASSES["pushup"]["num_classes"] == 7, "pushup should have 7 classes"
+# Sprawdź że oba mają klasę "setup" na pozycji 0
+assert EXERCISE_CLASSES["pullup_overhand"]["labels"][0] == "setup", "pullup_overhand label 0 should be setup"
+assert EXERCISE_CLASSES["pushup"]["labels"][0] == "setup", "pushup label 0 should be setup"
 print("  ✅ Config OK\n")
 
 print("=" * 60)
@@ -46,11 +54,11 @@ assert abs(c - 90.0) < 0.1, f"Expected 90, got {c}"
 print("  ✅ Angles OK\n")
 
 print("=" * 60)
-print("TEST 3: Angle Analyzer (3 exercises)")
+print("TEST 3: Angle Analyzer (2 exercises)")
 print("=" * 60)
 from model.angle_calculator import ExerciseAngleAnalyzer
 
-for exercise in ["squat", "pushup", "lunge"]:
+for exercise in ["pullup_overhand", "pushup"]:
     analyzer = ExerciseAngleAnalyzer(exercise)
     fake_frame = np.random.rand(21, 3).astype(np.float32)
     fake_frame[:, 2] = 0.9
@@ -74,11 +82,11 @@ print(f"  Mid-hip after norm (frame0): {normalized[0, 20, :2]}")
 print("  ✅ Normalization OK\n")
 
 print("=" * 60)
-print("TEST 5: RepCounter (3 exercises)")
+print("TEST 5: RepCounter (2 exercises)")
 print("=" * 60)
 from model.rep_counter import RepCounter
 
-for exercise in ["squat", "pushup", "lunge"]:
+for exercise in ["pullup_overhand", "pushup"]:
     counter = RepCounter(exercise)
     fake_seq = np.random.rand(60, 21, 3).astype(np.float32)
     fake_seq[:, :, 2] = 0.9
@@ -99,7 +107,7 @@ try:
     print(f"  Input:  {x.shape}")
     print(f"  Output: {out.shape}")
     print(f"  Params: {count_parameters(model):,}")
-    assert out.shape == (2, 5), f"Expected (2, 5), got {out.shape}"
+    assert out.shape == (2, 7), f"Expected (2, 7), got {out.shape}"
 
     # Test per exercise
     for ex_name, ex_cfg in EXERCISE_CLASSES.items():
