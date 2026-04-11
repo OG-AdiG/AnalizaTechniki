@@ -133,7 +133,7 @@ class RepCounter:
 
 if __name__ == "__main__":
     # Test z syntetycznymi danymi — 3 ćwiczenia
-    for exercise in ["squat", "pushup", "lunge"]:
+    for exercise in ["pullup_overhand", "pushup"]:
         print(f"\n{'='*40}")
         print(f"TEST RepCounter: {exercise.upper()}")
         print(f"{'='*40}")

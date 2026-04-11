@@ -17,6 +17,9 @@ RAW_VIDEOS_DIR = os.path.join(DATA_DIR, "raw_videos")
 KEYPOINTS_DIR = os.path.join(DATA_DIR, "keypoints")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
 
+# Ścieżka do repozytorium modelu pose estimation (SimCC)
+POSE_MODEL_DIR = r"c:\Users\Adrian\Desktop\Przedsiewziecie_inzynierskie_modele_ai\pose_training"
+
 # ============================================================
 # KEYPOINTS — WSPÓLNY FORMAT ZESPOŁOWY (z config.py kolegi)
 # ============================================================
@@ -110,165 +113,23 @@ EARLY_STOPPING_PATIENCE = 15
 MIN_CONFIDENCE = 0.3
 
 # ============================================================
-# DEFINICJE ĆWICZEŃ — 3 ćwiczenia z dokumentu projektowego
+# DEFINICJE ĆWICZEŃ — 2 ćwiczenia z klasą "setup"
 # ============================================================
 EXERCISE_CLASSES = {
-    # -------------------------------------------------------
-    # PRZYSIAD (SQUAT)
-    # -------------------------------------------------------
-    "squat": {
-        "labels": {
-            0: "correct",
-            1: "knee_valgus",       # Zapadanie kolan do środka
-            2: "heel_lift",         # Odrywanie pięt
-            3: "rounded_back",      # Zaokrąglone plecy
-            4: "shallow_depth",     # Zbyt mała głębokość (biodra powyżej kolan)
-        },
-        "num_classes": 5,
-
-        "key_landmarks": {
-            "left_shoulder": 3,  "right_shoulder": 4,
-            "left_hip": 9,       "right_hip": 10,
-            "left_knee": 11,     "right_knee": 12,
-            "left_ankle": 13,    "right_ankle": 14,
-            "left_heel": 17,     "right_heel": 18,
-            "left_big_toe": 15,  "right_big_toe": 16,
-            "sternum": 19,       "mid_hip": 20,
-            "nose": 0,
-        },
-
-        "angle_rules": {
-            "knee_angle": {
-                "joints": ("hip", "knee", "ankle"),
-                "correct_range_bottom": (70, 110),   # Na dole przysiadu
-                "correct_range_top": (160, 180),
-            },
-            "hip_angle": {
-                "joints": ("shoulder", "hip", "knee"),
-                "correct_range_bottom": (50, 90),
-                "error_name": "zbyt mała głębokość / zaokrąglone plecy",
-            },
-            "torso_angle": {
-                "joints": ("mid_hip", "sternum", "nose"),
-                "correct_range": (150, 180),
-                "error_name": "pochylony tułów / zaokrąglone plecy",
-            },
-        },
-
-        "rep_phases": {
-            "angle_joint": ("hip", "knee", "ankle"),
-            "up_threshold": 155,
-            "down_threshold": 100,
-        },
-    },
-
-    # -------------------------------------------------------
-    # POMPKA (PUSH-UP)
-    # -------------------------------------------------------
-    "pushup": {
-        "labels": {
-            0: "correct",
-            1: "sagging_hips",      # Opadające biodra
-            2: "raised_hips",       # Biodra zbyt wysoko (namiot)
-            3: "flared_elbows",     # Łokcie zbyt szeroko
-            4: "partial_rom",       # Niepełny zakres ruchu
-        },
-        "num_classes": 5,
-
-        "key_landmarks": {
-            "left_shoulder": 3,  "right_shoulder": 4,
-            "left_elbow": 5,     "right_elbow": 6,
-            "left_wrist": 7,     "right_wrist": 8,
-            "left_hip": 9,       "right_hip": 10,
-            "left_knee": 11,     "right_knee": 12,
-            "left_ankle": 13,    "right_ankle": 14,
-            "sternum": 19,       "mid_hip": 20,
-        },
-
-        "angle_rules": {
-            "elbow_angle": {
-                "joints": ("shoulder", "elbow", "wrist"),
-                "correct_range_bottom": (70, 110),   # Na dole pompki
-                "correct_range_top": (160, 180),      # Na górze pompki
-            },
-            "body_alignment": {
-                "joints": ("shoulder", "hip", "ankle"),
-                "correct_range": (160, 180),
-                "error_name": "opadające/uniesione biodra",
-            },
-            "shoulder_angle": {
-                "joints": ("hip", "shoulder", "elbow"),
-                "correct_range_bottom": (30, 75),
-                "error_name": "zbyt szerokie/wąskie ramiona",
-            },
-        },
-
-        "rep_phases": {
-            "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 150,
-            "down_threshold": 100,
-        },
-    },
-
-    # -------------------------------------------------------
-    # WYKROK (LUNGE)
-    # -------------------------------------------------------
-    "lunge": {
-        "labels": {
-            0: "correct",
-            1: "knee_over_toes",    # Kolano przed linią palców
-            2: "wrong_stride",      # Niewłaściwa długość kroku
-            3: "imbalance",         # Utrata równowagi (boczne odchylenie)
-            4: "torso_lean",        # Pochylenie tułowia do przodu
-        },
-        "num_classes": 5,
-
-        "key_landmarks": {
-            "left_shoulder": 3,  "right_shoulder": 4,
-            "left_hip": 9,       "right_hip": 10,
-            "left_knee": 11,     "right_knee": 12,
-            "left_ankle": 13,    "right_ankle": 14,
-            "left_big_toe": 15,  "right_big_toe": 16,
-            "sternum": 19,       "mid_hip": 20,
-            "nose": 0,
-        },
-
-        "angle_rules": {
-            "front_knee_angle": {
-                "joints": ("hip", "knee", "ankle"),
-                "correct_range_bottom": (80, 100),   # Kąt 90° docelowy
-            },
-            "back_knee_angle": {
-                "joints": ("hip", "knee", "ankle"),
-                "correct_range_bottom": (80, 100),
-            },
-            "torso_angle": {
-                "joints": ("mid_hip", "sternum", "nose"),
-                "correct_range": (160, 180),
-                "error_name": "pochylenie tułowia",
-            },
-        },
-
-        "rep_phases": {
-            "angle_joint": ("hip", "knee", "ankle"),
-            "up_threshold": 155,
-            "down_threshold": 100,
-        },
-    },
-
     # -------------------------------------------------------
     # PODCIĄGANIE NACHWYTEM (PULL-UP OVERHAND)
     # -------------------------------------------------------
     "pullup_overhand": {
         "labels": {
-            0: "correct",
-            1: "partial_rom_top",     # Broda nie dochodzi do drążka (tylko zgięcie łokci)
-            2: "kipping",             # Kołysanie ciałem / momentum
-            3: "chicken_neck",        # Naciąganie głowy żeby dać nad drążek
-            4: "partial_rom_bottom",  # Brak prostowania rąk w dolnej fazie
-            5: "asymmetric_pull",     # Jedna ręka ciągnie bardziej niż druga
+            0: "setup",
+            1: "correct",
+            2: "asymmetric_pull",
+            3: "partial_rom_top",
+            4: "partial_rom_bottom",
+            5: "kipping",
+            6: "chicken_neck",
         },
-        "num_classes": 6,
+        "num_classes": 7,
 
         "key_landmarks": {
             "nose": 0,
@@ -311,8 +172,58 @@ EXERCISE_CLASSES = {
             "down_threshold": 150,   # Łokcie proste = dół
         },
     },
+
+    # -------------------------------------------------------
+    # POMPKA (PUSH-UP)
+    # -------------------------------------------------------
+    "pushup": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "partial_rom_top",
+            3: "partial_rom_bottom",
+            4: "hips_low",
+            5: "hips_high",
+            6: "flared_elbows",
+        },
+        "num_classes": 7,
+
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_bottom": (70, 110),   # Na dole pompki
+                "correct_range_top": (160, 180),      # Na górze pompki
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "ankle"),
+                "correct_range": (160, 180),
+                "error_name": "opadające/uniesione biodra",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (30, 75),
+                "error_name": "zbyt szerokie/wąskie ramiona",
+            },
+        },
+
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 150,
+            "down_threshold": 100,
+        },
+    },
 }
 
 # Aktywne ćwiczenie (domyślnie)
-ACTIVE_EXERCISE = "pushup"
+ACTIVE_EXERCISE = "pullup_overhand"
 NUM_CLASSES = EXERCISE_CLASSES[ACTIVE_EXERCISE]["num_classes"]
