@@ -1,15 +1,21 @@
 """
-test_model.py — Testowanie modelu Analizy Techniki na nowym wideo.
+test_model.py — Testowanie modelu Analizy Techniki na wideo (per-rep flow).
 
-Skrypt ładuje wyeksportowany model TFLite (lub PyTorch), przetwarza wideo:
-- MediaPipe Pose → bounding box (detekcja osoby)
-- Model SimCC → 21 keypointów (x, y, confidence) 0-1
-- Normalizacja keypointów + sliding window → model TCN
-- Wyświetla klasę predykcji na ekranie w czasie rzeczywistym
+Skrypt przetwarza wideo i klasyfikuje KAŻDE POWTÓRZENIE osobno:
+- SimCC → 21 keypointów
+- RepCounter → wykrywa granice repów
+- TCN → klasyfikuje technikę PER REP (nie per klatkę!)
+- Wyświetla wynik na ekranie + podsumowanie na końcu
 
 Użycie:
-    python test_model.py --video test.mp4 --exercise pullup_overhand
-    python test_model.py --video test.mp4 --model path/to/model.tflite --exercise pullup_overhand
+    # Użytkownik wybiera ćwiczenie
+    python test_model.py --video test.mp4 --exercise pushup
+
+    # Auto-detekcja ćwiczenia
+    python test_model.py --video test.mp4 --exercise auto
+
+    # Z modelem PyTorch zamiast TFLite
+    python test_model.py --video test.mp4 --exercise pushup --pytorch
 """
 
 import os
@@ -25,12 +31,6 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import tensorflow as tf
-except ImportError:
-    print("❌ Brak tensorflow. Zainstaluj: pip install tensorflow")
-    sys.exit(1)
-
-try:
     import torch
     import torchvision.transforms as T
     from PIL import Image
@@ -42,45 +42,163 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model.config import (
     EXERCISE_CLASSES, SEQUENCE_LENGTH, INPUT_CHANNELS, POSE_MODEL_DIR,
+    MODELS_DIR,
 )
+from model.rep_classifier import RepClassifier
+from model.exercise_detector import ExerciseDetector
+# Import z pose_training — eksportowane przez video_to_keypoints
 from video_to_keypoints import (
     SKELETON_DRAW, ensure_mediapipe_model, MP_MODEL_PATH,
     load_simcc_model, DEFAULT_CHECKPOINT,
+    simcc_to_keypoints, crop_and_pad, INPUT_HEIGHT, INPUT_WIDTH,
 )
-from data_pipeline.extract_keypoints import normalize_keypoints, filter_low_confidence
 
-# Import z pose_training
-sys.path.insert(0, POSE_MODEL_DIR)
-from model import simcc_to_keypoints
-from dataset import crop_and_pad
-from config import INPUT_HEIGHT, INPUT_WIDTH
+
+# Kolory
+COLOR_CORRECT = (0, 200, 0)
+COLOR_ERROR = (0, 0, 255)
+COLOR_SETUP = (255, 200, 0)
+COLOR_PENDING = (200, 200, 200)
+COLOR_WHITE = (255, 255, 255)
+COLOR_BLACK = (0, 0, 0)
+COLOR_SKELETON = (0, 255, 100)
+
+
+def draw_rep_history(frame, rep_results, max_show=8):
+    """Rysuje historię repów na ekranie (prawy panel)."""
+    h, w = frame.shape[:2]
+    x_start = w - 260
+    y_start = 10
+
+    # Tło panelu
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x_start - 10, y_start - 5),
+                  (w - 5, y_start + 30 + min(len(rep_results), max_show) * 28),
+                  (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+    cv2.putText(frame, "Historia repow:", (x_start, y_start + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_WHITE, 1)
+
+    # Pokaż ostatnie N repów
+    visible = rep_results[-max_show:]
+    for i, rep in enumerate(visible):
+        y = y_start + 38 + i * 28
+        name = rep.get("class_name", "?")
+        conf = rep.get("confidence", 0)
+        num = rep.get("rep_number", i + 1)
+
+        if name == "correct":
+            color = COLOR_CORRECT
+            icon = "OK"
+        elif name == "setup":
+            color = COLOR_SETUP
+            icon = "SU"
+        else:
+            color = COLOR_ERROR
+            icon = "!!"
+
+        text = f"Rep {num}: [{icon}] {name} ({conf:.0%})"
+        cv2.putText(frame, text, (x_start, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
+
+
+def draw_summary_bar(frame, classifier):
+    """Rysuje pasek podsumowania na dole ekranu."""
+    h, w = frame.shape[:2]
+    summary = classifier.get_summary()
+
+    # Tło paska
+    cv2.rectangle(frame, (0, h - 90), (w, h), COLOR_BLACK, -1)
+
+    # Bieżący stan
+    state = classifier.get_current_state()
+    phase = state["phase"]
+    angle = state["angle_smooth"]
+    buf = state["buffered_frames"]
+    reps = state["rep_count"]
+
+    # Linia 1: Stan
+    status = f"Faza: {phase.upper()} | Kat: {angle:.0f}deg | Bufor: {buf} kl."
+    cv2.putText(frame, status, (10, h - 62),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, COLOR_WHITE, 1)
+
+    # Linia 2: Podsumowanie
+    total = summary["total_reps"]
+    correct = summary["correct_reps"]
+    acc = summary["accuracy"]
+
+    if total > 0:
+        sum_text = f"Repy: {reps} | Poprawne: {correct}/{total} ({acc:.0%})"
+        errors = summary["error_breakdown"]
+        if errors:
+            top_errors = sorted(errors.items(), key=lambda x: -x[1])[:3]
+            err_str = ", ".join(f"{k}:{v}" for k, v in top_errors)
+            sum_text += f" | Bledy: {err_str}"
+    else:
+        sum_text = f"Repy: {reps} | Oczekiwanie na powtorzenia..."
+
+    color = COLOR_CORRECT if acc > 0.7 else COLOR_ERROR if total > 0 else COLOR_PENDING
+    cv2.putText(frame, sum_text, (10, h - 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+
+    # Ostatni rep (jeśli nowy)
+    last_rep = state["last_rep"]
+    if last_rep:
+        last_name = last_rep.get("class_name", "?")
+        last_conf = last_rep.get("confidence", 0)
+        last_num = last_rep.get("rep_number", 0)
+        last_color = COLOR_CORRECT if last_name == "correct" else COLOR_ERROR
+        last_text = f"Ostatni: Rep {last_num} = {last_name} ({last_conf:.0%})"
+        cv2.putText(frame, last_text, (w - 350, h - 62),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, last_color, 1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Testowanie modelu na wideo")
+    parser = argparse.ArgumentParser(description="Testowanie modelu na wideo (per-rep)")
     parser.add_argument("--video", type=str, required=True, help="Ścieżka do filmu")
     parser.add_argument("--exercise", type=str, required=True,
-                        choices=list(EXERCISE_CLASSES.keys()), help="Nazwa ćwiczenia")
+                        choices=list(EXERCISE_CLASSES.keys()) + ["auto"],
+                        help="Nazwa ćwiczenia (lub 'auto')")
     parser.add_argument("--model", type=str, default=None,
-                        help="Ścieżka do modelu .tflite (domyślnie z saved_models/)")
+                        help="Ścieżka do modelu .tflite")
+    parser.add_argument("--pytorch", action="store_true",
+                        help="Użyj modelu PyTorch (.pt) zamiast TFLite")
     parser.add_argument("--checkpoint", type=str, default=DEFAULT_CHECKPOINT,
                         help="Ścieżka do checkpointu SimCC")
     args = parser.parse_args()
 
-    # Zlokalizuj model TFLite (technika)
+    # Detekcja ćwiczenia (auto lub manual)
+    exercise = args.exercise
+    exercise_detector = None
+
+    if exercise == "auto":
+        exercise_detector = ExerciseDetector(mode="heuristic")
+        exercise = "pushup"  # Domyślne — zmieni się po detekcji
+        print("🔍 Tryb auto-detekcji ćwiczenia")
+
+    # Lokalizacja modelu techniki
     if args.model is None:
-        args.model = os.path.join("saved_models", f"{args.exercise}_best.tflite")
+        if args.pytorch:
+            args.model = os.path.join(MODELS_DIR, f"{exercise}_best.pt")
+        else:
+            args.model = os.path.join(MODELS_DIR, f"{exercise}_best.tflite")
+
+    model_type = "pytorch" if args.pytorch else "tflite"
 
     if not os.path.exists(args.model):
-        print(f"❌ Nie znaleziono modelu: {args.model}")
-        print(f"Użyj: python run_pipeline.py --step 3 --exercise {args.exercise}")
-        sys.exit(1)
+        print(f"⚠ Model nie znaleziony: {args.model}")
+        print(f"  Klasyfikacja techniki wyłączona (tylko zliczanie repów)")
+        args.model = None
 
-    print(f"🤖 Ładowanie modelu TFLite (technika): {args.model}")
-    interpreter = tf.lite.Interpreter(model_path=args.model)
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+    # Inicjalizacja RepClassifier
+    classifier = RepClassifier(
+        exercise=exercise,
+        model_path=args.model,
+        model_type=model_type,
+    )
+    print(f"🏋️ Ćwiczenie: {exercise}")
+    print(f"📋 Klasy: {list(classifier.labels.values())}")
 
     # Ładowanie modelu SimCC (pose estimation)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,10 +206,6 @@ def main():
     normalize_transform = T.Normalize(
         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     )
-
-    # Pobieranie informacji o ćwiczeniu
-    classes = EXERCISE_CLASSES[args.exercise]["labels"]
-    print(f"📋 Wykrywane klasy: {classes}")
 
     # MediaPipe setup (TYLKO BB)
     ensure_mediapipe_model()
@@ -114,20 +228,19 @@ def main():
         sys.exit(1)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     target_fps = 30
     frame_step = max(1, round(fps / target_fps))
-    print(f"📹 Wideo FPS: {fps:.1f} → Pobieranie co {frame_step}. klatkę")
+    print(f"📹 Wideo FPS: {fps:.1f} → co {frame_step}. klatkę ({total_frames} kl., {total_frames/fps:.1f}s)")
 
-    # Bufor na sekwencję (ostatnie 30 klatek)
-    sequence_buffer = []
+    # Okno
+    cv2.namedWindow("SEE Trainer - Per-Rep Analysis", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("SEE Trainer - Per-Rep Analysis", 800, 600)
+
     last_bbox = None
-
-    # Okna
-    cv2.namedWindow("SEE Trainer - Test", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("SEE Trainer - Test", 600, 800)
-
     raw_frame_idx = 0
     font = cv2.FONT_HERSHEY_SIMPLEX
+    new_rep_flash_frames = 0  # Flash efekt przy nowym repie
 
     with PoseLandmarker.create_from_options(options) as landmarker:
         with torch.no_grad():
@@ -136,7 +249,6 @@ def main():
                 if not ret:
                     break
 
-                # Pomiń klatki żeby uzyskać 30 FPS
                 if raw_frame_idx % frame_step != 0:
                     raw_frame_idx += 1
                     continue
@@ -166,7 +278,6 @@ def main():
 
                 # === KROK 2: SimCC → 21 keypointów ===
                 keypoints_21 = np.zeros((21, 3), dtype=np.float32)
-                pose_detected = False
 
                 if last_bbox is not None:
                     cx, cy, bw, bh = last_bbox
@@ -186,10 +297,9 @@ def main():
                         input_tensor = normalize_transform(input_tensor)
                         input_tensor = input_tensor.unsqueeze(0).to(device)
 
-                        pred_x, pred_y = simcc_model(input_tensor)
-                        kps = simcc_to_keypoints(pred_x, pred_y)
+                        pred_x, pred_y, pred_vis = simcc_model(input_tensor)
+                        kps = simcc_to_keypoints(pred_x, pred_y, pred_vis)
                         keypoints_21 = kps[0].cpu().numpy()
-                        pose_detected = True
 
                         # Rysuj szkielet
                         for (i, j) in SKELETON_DRAW:
@@ -198,77 +308,71 @@ def main():
                             if c1 > 0.3 and c2 > 0.3:
                                 pt1 = (int(rx1 + x1n * crop_w), int(ry1 + y1n * crop_h))
                                 pt2 = (int(rx1 + x2n * crop_w), int(ry1 + y2n * crop_h))
-                                cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
+                                cv2.line(frame, pt1, pt2, COLOR_SKELETON, 2)
+
+                        # Auto-detect ćwiczenia
+                        if exercise_detector is not None:
+                            detected = exercise_detector.detect(keypoints_21)
+                            if detected != "unknown" and detected != exercise:
+                                exercise = detected
+                                classifier = RepClassifier(exercise, args.model, model_type)
+                                print(f"🔄 Wykryto ćwiczenie: {exercise}")
                 else:
-                    cv2.putText(frame, "BRAK POZY", (w//2-100, 50), font, 1, (0, 0, 255), 2)
+                    cv2.putText(frame, "BRAK POZY", (w // 2 - 100, 50),
+                                font, 1, COLOR_ERROR, 2)
 
-                # === KROK 3: Normalizacja + bufor ===
-                frame_kps = np.expand_dims(keypoints_21, axis=0)
-                frame_kps = filter_low_confidence(frame_kps)
-                norm_kp = normalize_keypoints(frame_kps)
-                sequence_buffer.append(norm_kp[0].flatten())
+                # === KROK 3: Per-rep klasyfikacja ===
+                rep_result = classifier.process_frame(keypoints_21)
 
-                if len(sequence_buffer) > SEQUENCE_LENGTH:
-                    sequence_buffer.pop(0)
+                if rep_result is not None:
+                    # Nowy rep — flash efekt
+                    new_rep_flash_frames = 15
+                    name = rep_result["class_name"]
+                    conf = rep_result["confidence"]
+                    num = rep_result["rep_number"]
+                    print(f"  🏋️ Rep {num}: {name} ({conf:.0%})")
 
-                # === KROK 4: Inferencja TCN ===
-                prediction_text = "Zbieranie danych..."
-                color = (255, 255, 0)
+                # Flash efekt nowego repa
+                if new_rep_flash_frames > 0:
+                    alpha = new_rep_flash_frames / 15.0
+                    last_result = classifier.rep_results[-1] if classifier.rep_results else None
+                    if last_result:
+                        flash_color = COLOR_CORRECT if last_result["class_name"] == "correct" else COLOR_ERROR
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (0, 0), (w, 5), flash_color, -1)
+                        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+                    new_rep_flash_frames -= 1
 
-                if len(sequence_buffer) == SEQUENCE_LENGTH:
-                    seq_array = np.array(sequence_buffer, dtype=np.float32)
+                # === RYSOWANIE UI ===
+                draw_rep_history(frame, classifier.rep_results)
+                draw_summary_bar(frame, classifier)
 
-                    expected_shape = input_details[0]['shape']
+                # Tytuł
+                title = f"SEE Trainer | {exercise.upper()} | Per-Rep Analysis"
+                cv2.putText(frame, title, (10, 30), font, 0.6, COLOR_WHITE, 1)
 
-                    if expected_shape[1] == INPUT_CHANNELS and expected_shape[2] == SEQUENCE_LENGTH:
-                        model_input = np.transpose(seq_array, (1, 0)).reshape(
-                            (1, INPUT_CHANNELS, SEQUENCE_LENGTH)
-                        )
-                    else:
-                        model_input = seq_array.reshape(
-                            (1, SEQUENCE_LENGTH, INPUT_CHANNELS)
-                        )
-
-                    interpreter.set_tensor(input_details[0]['index'], model_input)
-                    interpreter.invoke()
-                    logits = interpreter.get_tensor(output_details[0]['index'])[0]
-
-                    exp_logits = np.exp(logits - np.max(logits))
-                    probs = exp_logits / exp_logits.sum()
-
-                    pred_idx = np.argmax(probs)
-                    confidence = probs[pred_idx]
-
-                    if confidence > 0.4:
-                        pred_class = classes[pred_idx]
-
-                        if pred_class == "correct":
-                            color = (0, 255, 0)
-                            prediction_text = f"POPRAWNE ({confidence:.0%})"
-                        elif pred_class == "setup":
-                            color = (255, 200, 0)
-                            prediction_text = f"SETUP ({confidence:.0%})"
-                        else:
-                            color = (0, 0, 255)
-                            prediction_text = f"BLAD: {pred_class} ({confidence:.0%})"
-                    else:
-                        prediction_text = "Niepewny..."
-                        color = (200, 200, 200)
-
-                # Wyświetlanie
-                cv2.rectangle(frame, (0, h - 80), (w, h), (0, 0, 0), -1)
-                cv2.putText(frame, prediction_text, (20, h - 30), font, 1.2, color, 3)
-
-                buf_status = f"Buffer: {len(sequence_buffer)}/{SEQUENCE_LENGTH}"
-                cv2.putText(frame, buf_status, (w - 200, h - 30), font, 0.6, (255, 255, 255), 1)
-
-                cv2.imshow("SEE Trainer - Test", frame)
+                cv2.imshow("SEE Trainer - Per-Rep Analysis", frame)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
     cap.release()
     cv2.destroyAllWindows()
+
+    # Podsumowanie końcowe
+    summary = classifier.get_summary()
+    print("\n" + "=" * 60)
+    print("📊 PODSUMOWANIE SETA")
+    print("=" * 60)
+    print(f"  Ćwiczenie:   {summary['exercise']}")
+    print(f"  Łączne repy: {summary['total_reps']}")
+    print(f"  Poprawne:    {summary['correct_reps']}")
+    print(f"  Dokładność:  {summary['accuracy']:.0%}")
+    if summary["error_breakdown"]:
+        print(f"  Błędy:")
+        for error_name, count in summary["error_breakdown"].items():
+            print(f"    - {error_name}: {count}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

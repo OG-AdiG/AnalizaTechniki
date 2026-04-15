@@ -54,15 +54,31 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model.config import POSE_MODEL_DIR, SKELETON, NUM_KEYPOINTS
 
 # Import modelu SimCC z repozytorium kolegi (pose_training)
+# Musimy chwilowo wyczyścić cache 'model' z sys.modules, żeby Python nie załadował
+# naszego pakietu scratch/model tylko model.py z pose_training
+import sys
+_cached_model = sys.modules.pop("model", None)
 sys.path.insert(0, POSE_MODEL_DIR)
+
 try:
-    from model import PoseEstimationModel, simcc_to_keypoints
-    from dataset import crop_and_pad
-    from config import INPUT_HEIGHT, INPUT_WIDTH, SIMCC_SPLIT_RATIO
+    import model as pose_model
+    import dataset as pose_dataset
+    import config as pose_config
+
+    PoseEstimationModel = pose_model.PoseEstimationModel
+    simcc_to_keypoints = pose_model.simcc_to_keypoints
+    crop_and_pad = pose_dataset.crop_and_pad
+    INPUT_HEIGHT = pose_config.INPUT_HEIGHT
+    INPUT_WIDTH = pose_config.INPUT_WIDTH
+    SIMCC_SPLIT_RATIO = pose_config.SIMCC_SPLIT_RATIO
 except ImportError as e:
     print(f"❌ Nie można zaimportować z pose_training ({POSE_MODEL_DIR}): {e}")
-    print(f"   Upewnij się że ścieżka jest poprawna i zawiera model.py, dataset.py, config.py")
     sys.exit(1)
+finally:
+    # Przywróć oryginalne środowisko żeby niczego nie zepsuć reszcie kodu
+    sys.path.pop(0)
+    if _cached_model is not None:
+        sys.modules["model"] = _cached_model
 
 # Pary lewo-prawo do lustrzanego odbicia
 MIRROR_PAIRS = [
@@ -240,10 +256,10 @@ def extract_keypoints_from_video(video_path: str,
                         input_tensor = normalize_transform(input_tensor)
                         input_tensor = input_tensor.unsqueeze(0).to(device)
 
-                        pred_x, pred_y = simcc_model(input_tensor)
+                        pred_x, pred_y, pred_vis = simcc_model(input_tensor)
 
                         # SimCC dekodowanie → [1, 21, 3] (x_norm, y_norm, conf) 0-1
-                        kps = simcc_to_keypoints(pred_x, pred_y)
+                        kps = simcc_to_keypoints(pred_x, pred_y, pred_vis)
                         kps = kps[0].cpu().numpy()  # [21, 3]
 
                         keypoints_21 = kps

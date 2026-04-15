@@ -132,6 +132,31 @@ def convert_onnx_to_tflite(onnx_path: str, tflite_path: str, quantize: bool = Fa
         print(f"❌ Wystąpił błąd podczas konwersji: {e}")
 
 
+def convert_to_tflite_aiedge(model: TemporalCNN, tflite_path: str,
+                             input_channels: int = INPUT_CHANNELS,
+                             sequence_length: int = SEQUENCE_LENGTH) -> bool:
+    """Eksport bezpośrednio (PyTorch → TFLite) z użyciem AI Edge Torch."""
+    try:
+        import ai_edge_torch
+        print(f"🔄 Konwersja bezpośrednia PyTorch → TFLite (AI Edge Torch)...")
+        
+        sample_input = (torch.randn(1, input_channels, sequence_length),)
+        edge_model = ai_edge_torch.convert(model.eval(), sample_input)
+        edge_model.export(tflite_path)
+        
+        file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
+        print(f"✅ TFLite (AI Edge Torch) zapisany: {tflite_path} ({file_size_mb:.2f} MB)")
+        return True
+    except ImportError:
+        print("   ℹ️ Brak pakietu ai-edge-torch. Instalacja: pip install ai-edge-torch")
+        print("   ⚠️ Uruchamiam zewnetrzny moduł fallback (ONNX → onnx2tf)...")
+        return False
+    except Exception as e:
+        print(f"❌ Błąd w AI Edge Torch: {e}")
+        print("   ⚠️ Uruchamiam zewnetrzny moduł fallback (ONNX → onnx2tf)...")
+        return False
+
+
 def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
     """Weryfikuje, że TFLite daje podobne wyniki co PyTorch."""
     import tensorflow as tf
@@ -195,7 +220,13 @@ def main():
     seq_len = ckpt.get("sequence_length", SEQUENCE_LENGTH)
 
     export_to_onnx(model, onnx_path, input_ch, seq_len)
-    convert_onnx_to_tflite(onnx_path, tflite_path, quantize=args.quantize)
+
+    # Próba bezpośredniego wydajnego eksportu od Google (AI Edge Torch)
+    success = convert_to_tflite_aiedge(model, tflite_path, input_ch, seq_len)
+    
+    # Jeśli coś poszło nie tak (brak biblioteki instalowanej), użyj starszego onnx2tf
+    if not success:
+        convert_onnx_to_tflite(onnx_path, tflite_path, quantize=args.quantize)
 
     if args.test:
         verify_tflite(tflite_path, model)

@@ -20,6 +20,9 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
 # Ścieżka do repozytorium modelu pose estimation (SimCC)
 POSE_MODEL_DIR = r"c:\Users\Adrian\Desktop\Przedsiewziecie_inzynierskie_modele_ai\pose_training"
 
+# Ścieżka do filmów treningowych z pojedynczymi powtórzeniami
+PUSHUP_VIDEOS_DIR = r"D:\Pushups"
+
 # ============================================================
 # KEYPOINTS — WSPÓLNY FORMAT ZESPOŁOWY (z config.py kolegi)
 # ============================================================
@@ -113,6 +116,30 @@ EARLY_STOPPING_PATIENCE = 15
 MIN_CONFIDENCE = 0.3
 
 # ============================================================
+# PARAMETRY REP COUNTER — filtr całkujący
+# ============================================================
+# EMA (Exponential Moving Average) — wygładzenie szumu
+EMA_ALPHA = 0.25             # 0.25 = agresywne wygładzanie (mniejszy szum)
+
+# Minimalna amplituda kąta (°) żeby policzyć powtórzenie
+# Zapobiega zliczaniu mikro-ruchów / szumu keypointów
+REP_AMPLITUDE_THRESHOLD = 40.0
+
+# Minimalny czas trwania repa w klatkach (1 klatka = 1/30s)
+# Fizycznie niemożliwe zrobić pompkę w < 0.67s → min 20 klatek
+MIN_REP_FRAMES = 20
+
+# Maksymalna liczba powtórzeń na minutę (per ćwiczenie)
+# Zabezpieczenie: jeśli counter liczy > MAX, to sensor noise
+MAX_REPS_PER_MINUTE = {
+    "pushup": 40,
+    "pullup_overhand": 25,
+}
+
+# Domyślny sufit jeśli ćwiczenie nie ma zdefiniowanego
+DEFAULT_MAX_REPS_PER_MINUTE = 30
+
+# ============================================================
 # DEFINICJE ĆWICZEŃ — 2 ćwiczenia z klasą "setup"
 # ============================================================
 EXERCISE_CLASSES = {
@@ -175,16 +202,17 @@ EXERCISE_CLASSES = {
 
     # -------------------------------------------------------
     # POMPKA (PUSH-UP)
+    # Nazwy klas = nazwy folderów w D:\Pushups
     # -------------------------------------------------------
     "pushup": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "partial_rom_top",
-            3: "partial_rom_bottom",
-            4: "hips_low",
-            5: "hips_high",
-            6: "flared_elbows",
+            2: "flared_elbows",
+            3: "high_hips",
+            4: "partial_rom_bottom",
+            5: "partial_rom_top",
+            6: "sagging_hips",
         },
         "num_classes": 7,
 
@@ -225,5 +253,5 @@ EXERCISE_CLASSES = {
 }
 
 # Aktywne ćwiczenie (domyślnie)
-ACTIVE_EXERCISE = "pullup_overhand"
+ACTIVE_EXERCISE = "pushup"
 NUM_CLASSES = EXERCISE_CLASSES[ACTIVE_EXERCISE]["num_classes"]
