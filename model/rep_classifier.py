@@ -122,10 +122,26 @@ class RepClassifier:
         # Aktualizuj RepCounter
         rep_state = self.rep_counter.update(keypoints_21)
 
-        if rep_state["new_rep"]:
-            # Rep ukończony → klasyfikuj buforowane klatki
+        # === Detekcja startu ćwiczenia ===
+        # Gdy RepCounter wykryje pierwsze przejście progu down (just_started),
+        # oznacza to, że osoba właśnie zaczęła ruch — wszystkie wcześniejsze
+        # klatki w buforze to setup (ustawianie, podchodzenie) i trzeba je
+        # odrzucić. Zostawiamy TYLKO bieżącą klatkę jako start 1. repa.
+        if rep_state.get("just_started", False):
+            discarded = len(self.frame_buffer) - 1
+            self.frame_buffer = self.frame_buffer[-1:]  # Zostaw tylko bieżącą
+            if discarded > 0:
+                print(f"  🧹 Odrzucono {discarded} klatek setup z bufora")
+
+        if rep_state["new_rep"] or rep_state.get("partial_rep", False):
+            # Rep ukończony (pełny lub partial) → klasyfikuj buforowane klatki
+            is_partial = rep_state.get("partial_rep", False)
             result = self._classify_buffered_rep(rep_state)
+            result["is_partial"] = is_partial
             self.rep_results.append(result)
+
+            if is_partial:
+                print(f"  ⚡ Partial rep wykryty → klasyfikacja: {result['class_name']}")
 
             # Zachowaj ostatnich kilka klatek jako start nowego repa
             # (overlap pomaga z kontekstem)
@@ -139,13 +155,13 @@ class RepClassifier:
     def _classify_buffered_rep(self, rep_state: dict) -> dict:
         """
         Klasyfikuje buforowane klatki jako jeden rep.
-        Normalizuje, resize'uje do SEQUENCE_LENGTH i przepuszcza przez model.
+        Resize'uje do SEQUENCE_LENGTH i przepuszcza przez model.
+
+        UWAGA: Dane treningowe (.npy) są SUROWE (bez normalizacji),
+        więc tutaj też NIE normalizujemy — model oczekuje raw keypointów.
         """
         frames = np.array(self.frame_buffer, dtype=np.float32)  # (T, 21, 3)
-
-        # Normalizacja keypointów
-        frames = filter_low_confidence(frames)
-        frames = normalize_keypoints(frames)
+        raw_frame_count = frames.shape[0]
 
         # Resize do SEQUENCE_LENGTH (padding lub subsampling)
         frames = self._resize_sequence(frames, SEQUENCE_LENGTH)
@@ -165,8 +181,17 @@ class RepClassifier:
             }
 
         result["rep_number"] = len(self.rep_results) + 1
-        result["rep_frames"] = len(self.frame_buffer)
+        result["rep_frames"] = raw_frame_count
         result["rep_amplitude"] = rep_state.get("rep_amplitude", 0.0)
+
+        # === Diagnostyka ===
+        probs = result.get("all_probs", {})
+        if probs:
+            sorted_probs = sorted(probs.items(), key=lambda x: -x[1])
+            top2 = sorted_probs[:2]
+            print(f"    📊 Bufor: {raw_frame_count} kl. → "
+                  f"Top: {top2[0][0]}={top2[0][1]:.0%}"
+                  + (f", {top2[1][0]}={top2[1][1]:.0%}" if len(top2) > 1 else ""))
 
         return result
 

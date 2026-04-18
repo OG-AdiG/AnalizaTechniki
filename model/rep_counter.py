@@ -27,6 +27,7 @@ from model.config import (
     TARGET_FPS,
     ADAPTIVE_THRESHOLD_REPS, ADAPTIVE_MARGIN,
     MAX_CONSECUTIVE_DROPOUTS, MAX_PHASE_FRAMES,
+    PARTIAL_REP_MIN_AMPLITUDE, REVERSAL_DEADBAND,
 )
 
 
@@ -103,6 +104,7 @@ class RepCounter:
         # Filtr całkujący — akumuluje kierunek zmiany kąta
         self.integral = 0.0
         self.prev_smooth = None
+        self.last_delta = 0.0         # Ostatnia pochodna kąta (do reversal detection)
 
         # Śledzenie klatek w bieżącym repie
         self.frames_in_current_rep = 0
@@ -120,6 +122,20 @@ class RepCounter:
 
         # === NOWE: Timeout tracking ===
         self.phase_start_frame = 0  # Kiedy zaczęła się bieżąca faza
+
+        # === NOWE: Detekcja startu ćwiczenia (warm-up) ===
+        # False dopóki osoba się ustawia / podchodzi.
+        # True od momentu pierwszego przejścia progu down_threshold
+        # (= osoba zaczęła pierwszy ruch w dół = realne ćwiczenie).
+        self.exercise_started = False
+
+        # === NOWE: Detekcja partial repów (reversal tracking) ===
+        # Śledzi kierunek ruchu kąta. Gdy kąt odwraca kierunek
+        # (rising→falling = peak) z wystarczającą amplitudą ale BEZ
+        # przekroczenia hard thresholds → partial_rep.
+        self.prev_direction = 0       # -1=falling, 0=unknown, +1=rising
+        self.reversal_valley = None   # Kąt w ostatnim lokalnym minimum
+        self.hard_rep_fired = False   # Czy hard rep był w bieżącym cyklu?
 
     def _get_tracking_angle(self, frame: np.ndarray):
         """
@@ -194,10 +210,14 @@ class RepCounter:
         Akumuluje zmianę kąta w czasie. Drobne drgania się nawzajem
         kompensują (szum jest symetryczny), a pełny ruch akumuluje
         dużą wartość.
+
+        Zapisuje też last_delta do użycia przez reversal detector.
         """
         if self.prev_smooth is not None:
-            delta = angle_smooth - self.prev_smooth
-            self.integral += delta
+            self.last_delta = angle_smooth - self.prev_smooth
+            self.integral += self.last_delta
+        else:
+            self.last_delta = 0.0
         self.prev_smooth = angle_smooth
 
     def _check_amplitude(self) -> bool:
@@ -366,11 +386,21 @@ class RepCounter:
 
         # === Krok 4: Detekcja faz + timeout ===
         new_rep = False
+        partial_rep = False
+        just_started = False  # Flaga: właśnie wykryto start ćwiczenia
         self.frames_in_current_rep += 1
 
         if self.phase == "up" and angle_smooth < self.down_threshold:
             self.phase = "down"
             self.phase_start_frame = self.frame_index
+
+            # === Detekcja startu ćwiczenia ===
+            # Pierwsze przejście up→down = osoba zaczęła ruch.
+            # Sygnalizujemy to przez just_started, żeby classifier
+            # mógł wyczyścić bufor z klatek setup.
+            if not self.exercise_started:
+                self.exercise_started = True
+                just_started = True
 
         elif self.phase == "down" and angle_smooth > self.up_threshold:
             # Potencjalny rep — walidacja
@@ -392,6 +422,13 @@ class RepCounter:
         if not new_rep and self._check_phase_timeout():
             new_rep = self._complete_rep(angle_smooth)
 
+        # === Krok 6: Detekcja partial repów (reversal tracking) ===
+        # Śledzi kierunek kąta. Gdy wykryje pełny cykl (valley→peak)
+        # z amplitudą >= PARTIAL_REP_MIN_AMPLITUDE ale BEZ przekroczenia
+        # hard thresholds → partial_rep = True.
+        if not new_rep and self.exercise_started:
+            partial_rep = self._check_reversal_partial(angle_smooth)
+
         self.frame_index += 1
 
         return {
@@ -400,6 +437,9 @@ class RepCounter:
             "angle_raw": angle_raw,
             "angle_smooth": angle_smooth,
             "new_rep": new_rep,
+            "partial_rep": partial_rep,
+            "just_started": just_started,
+            "exercise_started": self.exercise_started,
             "rep_amplitude": abs(self.angle_peak - self.angle_valley)
                              if self.angle_peak is not None
                                 and self.angle_valley is not None
@@ -426,10 +466,73 @@ class RepCounter:
         # Reset integrala
         self.integral = 0.0
 
+        # Oznacz że hard rep był w tym cyklu (blokuje partial_rep)
+        self.hard_rep_fired = True
+
         # Próba adaptacji progów po N repach
         self._adapt_thresholds()
 
         return True
+
+    def _check_reversal_partial(self, angle_smooth: float) -> bool:
+        """
+        Wykrywa partial repy na podstawie odwrócenia kierunku kąta.
+
+        Algorytm:
+        1. Oblicz pochodną (delta) wygładzonego kąta
+        2. Z deadband filtruj szum → ustal kierunek (rising/falling)
+        3. Gdy falling→rising: zapamiętaj valley (lokalne minimum)
+        4. Gdy rising→falling: zapamiętaj peak (lokalne maximum)
+           - Jeśli amplitude (peak - valley) >= PARTIAL_REP_MIN_AMPLITUDE
+           - I hard_rep NIE był wykryty od ostatniego valley
+           - I debounce OK
+           → partial_rep = True (pół-powtórzenie)
+        """
+        if self.prev_smooth is None:
+            return False
+
+        # Użyj last_delta obliczonego w _update_integral()
+        # (nie obliczaj ponownie — prev_smooth jest już zaktualizowany!)
+        delta = self.last_delta
+
+        # Ustal kierunek z deadband (filtr szumu)
+        if delta > REVERSAL_DEADBAND:
+            new_dir = 1   # rising
+        elif delta < -REVERSAL_DEADBAND:
+            new_dir = -1  # falling
+        else:
+            new_dir = self.prev_direction  # bez zmian
+
+        partial = False
+
+        if new_dir != self.prev_direction and self.prev_direction != 0:
+            if new_dir == 1:
+                # Reversal: falling → rising = valley (lokalne minimum)
+                self.reversal_valley = angle_smooth
+                self.hard_rep_fired = False  # Nowy cykl, reset flagi
+
+            elif new_dir == -1:
+                # Reversal: rising → falling = peak (lokalne maximum)
+                # Sprawdź czy to partial rep (hard thresholds nie złapały)
+                if (self.reversal_valley is not None
+                        and not self.hard_rep_fired):
+                    amplitude = angle_smooth - self.reversal_valley
+                    frames_since_last = self.frame_index - self.last_rep_frame
+
+                    if (amplitude >= PARTIAL_REP_MIN_AMPLITUDE
+                            and frames_since_last >= self.min_rep_frames):
+                        partial = True
+                        self.rep_count += 1
+                        self.last_rep_frame = self.frame_index
+                        self.frames_in_current_rep = 0
+
+                        # Reset peak/valley
+                        self.angle_peak = angle_smooth
+                        self.angle_valley = angle_smooth
+                        self.integral = 0.0
+
+        self.prev_direction = new_dir
+        return partial
 
     def count_from_sequence(self, sequence: np.ndarray) -> dict:
         """

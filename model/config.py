@@ -154,6 +154,12 @@ MAX_CONSECUTIVE_DROPOUTS = 5
 # 90 klatek = 3 sekundy przy 30 FPS
 MAX_PHASE_FRAMES = 90
 
+# --- Detekcja partial repów (pół-powtórzeń) ---
+# Min. amplituda (°) żeby uznać ruch za partial rep (niższa niż full rep)
+PARTIAL_REP_MIN_AMPLITUDE = 20.0
+# Deadband pochodnej (°/klatkę) — poniżej tego szum, nie zmiana kierunku
+REVERSAL_DEADBAND = 0.5
+
 # ============================================================
 # DEFINICJE ĆWICZEŃ — 2 ćwiczenia z klasą "setup"
 # ============================================================
