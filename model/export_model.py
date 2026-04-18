@@ -135,24 +135,45 @@ def convert_onnx_to_tflite(onnx_path: str, tflite_path: str, quantize: bool = Fa
 def convert_to_tflite_aiedge(model: TemporalCNN, tflite_path: str,
                              input_channels: int = INPUT_CHANNELS,
                              sequence_length: int = SEQUENCE_LENGTH) -> bool:
-    """Eksport bezpośrednio (PyTorch → TFLite) z użyciem AI Edge Torch."""
+    """Eksport bezpośrednio (PyTorch → TFLite) z użyciem LiteRT Torch (dawniej AI Edge Torch)."""
+    converter = None
+    pkg_name = None
+
+    # Próba 1: nowa paczka litert-torch
     try:
-        import ai_edge_torch
-        print(f"🔄 Konwersja bezpośrednia PyTorch → TFLite (AI Edge Torch)...")
-        
-        sample_input = (torch.randn(1, input_channels, sequence_length),)
-        edge_model = ai_edge_torch.convert(model.eval(), sample_input)
-        edge_model.export(tflite_path)
-        
-        file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
-        print(f"✅ TFLite (AI Edge Torch) zapisany: {tflite_path} ({file_size_mb:.2f} MB)")
-        return True
+        import litert_torch
+        converter = litert_torch
+        pkg_name = "litert-torch"
     except ImportError:
-        print("   ℹ️ Brak pakietu ai-edge-torch. Instalacja: pip install ai-edge-torch")
+        pass
+
+    # Próba 2: stara paczka ai-edge-torch (kompatybilność wsteczna)
+    if converter is None:
+        try:
+            import ai_edge_torch
+            converter = ai_edge_torch
+            pkg_name = "ai-edge-torch"
+        except ImportError:
+            pass
+
+    if converter is None:
+        print("   ℹ️ Brak pakietu litert-torch ani ai-edge-torch.")
+        print("   📦 Instalacja: pip install litert-torch")
         print("   ⚠️ Uruchamiam zewnetrzny moduł fallback (ONNX → onnx2tf)...")
         return False
+
+    try:
+        print(f"🔄 Konwersja bezpośrednia PyTorch → TFLite ({pkg_name})...")
+
+        sample_input = (torch.randn(1, input_channels, sequence_length),)
+        edge_model = converter.convert(model.eval(), sample_input)
+        edge_model.export(tflite_path)
+
+        file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
+        print(f"✅ TFLite ({pkg_name}) zapisany: {tflite_path} ({file_size_mb:.2f} MB)")
+        return True
     except Exception as e:
-        print(f"❌ Błąd w AI Edge Torch: {e}")
+        print(f"❌ Błąd w {pkg_name}: {e}")
         print("   ⚠️ Uruchamiam zewnetrzny moduł fallback (ONNX → onnx2tf)...")
         return False
 
@@ -219,15 +240,14 @@ def main():
     input_ch = ckpt.get("input_channels", INPUT_CHANNELS)
     seq_len = ckpt.get("sequence_length", SEQUENCE_LENGTH)
 
-    export_to_onnx(model, onnx_path, input_ch, seq_len)
-
-    # Próba bezpośredniego wydajnego eksportu od Google (AI Edge Torch)
-    success = convert_to_tflite_aiedge(model, tflite_path, input_ch, seq_len)
+    # 1. Próba bezpośredniego wydajnego eksportu od Google (AI Edge Torch)
+    success_ai_edge = convert_to_tflite_aiedge(model, tflite_path, input_ch, seq_len)
     
-    # Jeśli coś poszło nie tak (brak biblioteki instalowanej), użyj starszego onnx2tf
-    if not success:
+    # 2. Jeśli brak ai_edge_torch (lub błąd), użyj starszego onnx2tf (wymaga wygenerowania ONNX)
+    if not success_ai_edge:
+        export_to_onnx(model, onnx_path, input_ch, seq_len)
         convert_onnx_to_tflite(onnx_path, tflite_path, quantize=args.quantize)
-
+        
     if args.test:
         verify_tflite(tflite_path, model)
 

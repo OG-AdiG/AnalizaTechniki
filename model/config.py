@@ -139,6 +139,21 @@ MAX_REPS_PER_MINUTE = {
 # Domyślny sufit jeśli ćwiczenie nie ma zdefiniowanego
 DEFAULT_MAX_REPS_PER_MINUTE = 30
 
+# --- Adaptacyjne progi (NOWE) ---
+# Po ilu repach dostosować progi do faktycznego ROM osoby
+ADAPTIVE_THRESHOLD_REPS = 3
+# Margines od obserwowanego ROM (0.2 = 20% zapasu)
+ADAPTIVE_MARGIN = 0.20
+
+# --- Odporność na dropout keypointów (NOWE) ---
+# Max klatek z rzędu bez ważnego kąta — potem sygnał uznany za utracony
+MAX_CONSECUTIVE_DROPOUTS = 5
+
+# --- Timeout fazy (NOWE) ---
+# Max klatek w jednej fazie (np. "down") zanim wymusimy granicę repa
+# 90 klatek = 3 sekundy przy 30 FPS
+MAX_PHASE_FRAMES = 90
+
 # ============================================================
 # DEFINICJE ĆWICZEŃ — 2 ćwiczenia z klasą "setup"
 # ============================================================
@@ -246,8 +261,8 @@ EXERCISE_CLASSES = {
 
         "rep_phases": {
             "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 150,
-            "down_threshold": 100,
+            "up_threshold": 125,      # Obniżone z 150 — łapiemy partial ROM repy
+            "down_threshold": 100,    # i zostawiamy klasyfikację modelowi TCN
         },
     },
 }
