@@ -127,7 +127,7 @@ REP_AMPLITUDE_THRESHOLD = 40.0
 
 # Minimalny czas trwania repa w klatkach (1 klatka = 1/30s)
 # Fizycznie niemożliwe zrobić pompkę w < 0.67s → min 20 klatek
-MIN_REP_FRAMES = 20
+MIN_REP_FRAMES = 10  # 10 klatek @ 30 FPS ≈ 0.34s min między repami
 
 # Maksymalna liczba powtórzeń na minutę (per ćwiczenie)
 # Zabezpieczenie: jeśli counter liczy > MAX, to sensor noise

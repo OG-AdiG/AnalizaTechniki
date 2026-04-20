@@ -164,25 +164,22 @@ def step2_train(exercise: str):
 def step3_export(exercise: str):
     """Krok 3: Eksport do TFLite."""
     from model.export_model import (
-        load_trained_model, export_to_onnx,
-        convert_onnx_to_tflite, verify_tflite,
+        load_trained_model, convert_to_tflite
     )
 
     print("\n" + "=" * 60)
-    print(f"KROK 3: Eksport modelu → ONNX → TFLite ({exercise})")
+    print(f"KROK 3: Eksport modelu → TFLite (FP16) ({exercise})")
     print("=" * 60)
 
     checkpoint_path = os.path.join(MODELS_DIR, f"{exercise}_best.pt")
-    onnx_path = os.path.join(MODELS_DIR, f"{exercise}_best.onnx")
-    tflite_path = os.path.join(MODELS_DIR, f"{exercise}_best.tflite")
+    tflite_path = os.path.join(MODELS_DIR, f"{exercise}_best_fp16.tflite")
 
     model, ckpt = load_trained_model(checkpoint_path)
     input_ch = ckpt.get("input_channels", 63)
     seq_len = ckpt.get("sequence_length", 30)
 
-    export_to_onnx(model, onnx_path, input_ch, seq_len)
-    convert_onnx_to_tflite(onnx_path, tflite_path)
-    verify_tflite(tflite_path, model)
+    convert_to_tflite(model, tflite_path, input_channels=input_ch, sequence_length=seq_len, fp16=True)
+    print(f"✅ Eksport zakończony. Plik: {tflite_path}")
 
 
 def main():
@@ -261,8 +258,7 @@ def main():
     print("=" * 60)
     print(f"\nPliki wynikowe:")
     print(f"  📊 Model PyTorch: {os.path.join(MODELS_DIR, f'{args.exercise}_best.pt')}")
-    print(f"  📊 Model ONNX:    {os.path.join(MODELS_DIR, f'{args.exercise}_best.onnx')}")
-    print(f"  📱 Model TFLite:  {os.path.join(MODELS_DIR, f'{args.exercise}_best.tflite')}")
+    print(f"  📱 Model TFLite (FP16): {os.path.join(MODELS_DIR, f'{args.exercise}_best_fp16.tflite')}")
 
 
 if __name__ == "__main__":

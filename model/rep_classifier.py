@@ -124,20 +124,32 @@ class RepClassifier:
 
         # === Detekcja startu ćwiczenia ===
         # Gdy RepCounter wykryje pierwsze przejście progu down (just_started),
-        # oznacza to, że osoba właśnie zaczęła ruch — wszystkie wcześniejsze
-        # klatki w buforze to setup (ustawianie, podchodzenie) i trzeba je
-        # odrzucić. Zostawiamy TYLKO bieżącą klatkę jako start 1. repa.
+        # oznacza to, że osoba właśnie zaczęła ruch — wcześniejsze klatki
+        # to setup (ustawianie, podchodzenie). Zostawiamy ostatnie 30 klatek
+        # żeby faza "up" pierwszego repa nie została utracona.
         if rep_state.get("just_started", False):
-            discarded = len(self.frame_buffer) - 1
-            self.frame_buffer = self.frame_buffer[-1:]  # Zostaw tylko bieżącą
+            keep = min(30, len(self.frame_buffer))
+            discarded = len(self.frame_buffer) - keep
+            self.frame_buffer = self.frame_buffer[-keep:]
             if discarded > 0:
-                print(f"  🧹 Odrzucono {discarded} klatek setup z bufora")
+                print(f"  🧹 Odrzucono {discarded} klatek setup z bufora (zachowano {keep})")
 
         if rep_state["new_rep"] or rep_state.get("partial_rep", False):
             # Rep ukończony (pełny lub partial) → klasyfikuj buforowane klatki
             is_partial = rep_state.get("partial_rep", False)
             result = self._classify_buffered_rep(rep_state)
             result["is_partial"] = is_partial
+
+            # Jeśli model sklasyfikował ruch jako "setup" (np. machanie rękami),
+            # to NIE jest to prawdziwe powtórzenie — cofnij licznik
+            if result.get("class_name") == "setup":
+                self.rep_counter.rep_count = max(0, self.rep_counter.rep_count - 1)
+                print(f"  ⏩ Sklasyfikowano jako setup — nie liczę jako rep")
+                # Nie dodajemy do rep_results, czyścimy bufor i idziemy dalej
+                overlap = min(5, len(self.frame_buffer))
+                self.frame_buffer = self.frame_buffer[-overlap:]
+                return None
+
             self.rep_results.append(result)
 
             if is_partial:
