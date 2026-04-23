@@ -12,7 +12,7 @@ Dwa tryby:
 Użycie:
     # Heurystyka
     detector = ExerciseDetector(mode="heuristic")
-    exercise = detector.detect(keypoints_frame)  # "pushup" / "pullup" / "unknown"
+    exercise = detector.detect(keypoints_frame)  # "pushup" / "pullup" / "dips" / "unknown"
 
     # Model (po wytrenowaniu)
     detector = ExerciseDetector(mode="model", model_path="exercise_classifier.tflite")
@@ -67,7 +67,7 @@ class HeuristicExerciseDetector:
             frame: (21, 3) — keypointy jednej klatki
 
         Returns:
-            nazwa ćwiczenia ("pushup", "pullup_overhand", "unknown")
+            nazwa ćwiczenia ("pushup", "pullup", "dips", "unknown")
         """
         # Wykrywanie z jednej klatki (surowe)
         raw_detection = self._detect_single_frame(frame)
@@ -142,7 +142,7 @@ class HeuristicExerciseDetector:
             return "pushup"
         elif wrists_above_shoulders and avg_shoulder_y < avg_hip_y:
             # W układzie 0-1: y=0 to góra, więc shoulder_y < hip_y = barki wyżej
-            return "pullup_overhand"
+            return "pullup"
         elif wrists_below_shoulders and wrists_near_hips and avg_shoulder_y < avg_hip_y:
             return "dips"
 

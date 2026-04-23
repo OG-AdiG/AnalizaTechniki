@@ -32,10 +32,10 @@ assert KEYPOINT_DIMS == 3, f"Expected 3, got {KEYPOINT_DIMS}"
 assert INPUT_CHANNELS == 63, f"Expected 63, got {INPUT_CHANNELS}"
 assert SEQUENCE_LENGTH == 30, f"Expected 30, got {SEQUENCE_LENGTH}"
 assert ACTIVE_EXERCISE == "pushup", f"Expected 'pushup', got {ACTIVE_EXERCISE}"
-assert len(EXERCISE_CLASSES) >= 2, f"Expected at least 2 exercises, got {len(EXERCISE_CLASSES)}"
-assert "pullup_overhand" in EXERCISE_CLASSES, "Missing pullup_overhand"
+assert len(EXERCISE_CLASSES) >= 20, f"Expected at least 20 exercises, got {len(EXERCISE_CLASSES)}"
+assert "pullup" in EXERCISE_CLASSES, "Missing pullup"
 assert "pushup" in EXERCISE_CLASSES, "Missing pushup"
-assert EXERCISE_CLASSES["pullup_overhand"]["num_classes"] == 7, "pullup_overhand should have 7 classes"
+assert EXERCISE_CLASSES["pullup"]["num_classes"] == 7, "pullup should have 7 classes"
 assert EXERCISE_CLASSES["pushup"]["num_classes"] == 7, "pushup should have 7 classes"
 # Sprawdz klasy pushup — musza pasowac do folderow na dysku
 pushup_labels = list(EXERCISE_CLASSES["pushup"]["labels"].values())
@@ -74,7 +74,7 @@ print("TEST 3: Angle Analyzer (2 exercises)")
 print("=" * 60)
 from model.angle_calculator import ExerciseAngleAnalyzer
 
-for exercise in ["pullup_overhand", "pushup"]:
+for exercise in ["pullup", "pushup", "dips"]:
     analyzer = ExerciseAngleAnalyzer(exercise)
     fake_frame = np.random.rand(21, 3).astype(np.float32)
     fake_frame[:, 2] = 0.9
@@ -217,7 +217,7 @@ pullup_frame[14] = [0.55, 0.9, 0.9] # right_ankle
 for _ in range(35):
     result_pullup = detector.detect(pullup_frame)
 print(f"  Podciaganie (wertykalna): {result_pullup}")
-assert result_pullup == "pullup_overhand", f"Expected 'pullup_overhand', got {result_pullup}"
+assert result_pullup == "pullup", f"Expected 'pullup', got {result_pullup}"
 
 print("  ✅ ExerciseDetector OK\n")
 

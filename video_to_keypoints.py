@@ -9,10 +9,10 @@ Konwertuje nagrania wideo → pliki .npy w formacie zespołowym (21 keypointów 
 
 Użycie:
     # Pojedynczy plik
-    python video_to_keypoints.py --video film.mp4 --output data/keypoints/pullup_overhand/correct/film1.npy
+    python video_to_keypoints.py --video film.mp4 --output data/keypoints/pullup/correct/film1.npy
 
     # Cały folder
-    python video_to_keypoints.py --video_dir filmy/correct/ --output_dir data/keypoints/pullup_overhand/correct/
+    python video_to_keypoints.py --video_dir filmy/correct/ --output_dir data/keypoints/pullup/correct/
 
     # Z podglądem
     python video_to_keypoints.py --video film.mp4 --output out.npy --preview
@@ -409,7 +409,7 @@ def main():
         epilog="""
 Przykłady:
   python video_to_keypoints.py --video film.mp4 --output wynik.npy
-  python video_to_keypoints.py --video_dir filmy/correct/ --output_dir data/keypoints/pullup_overhand/correct/
+  python video_to_keypoints.py --video_dir filmy/correct/ --output_dir data/keypoints/pullup/correct/
   python video_to_keypoints.py --video film.mp4 --output wynik.npy --preview
   python video_to_keypoints.py --video_dir filmy/ --output_dir data/ --mirror
         """)
@@ -459,7 +459,7 @@ Przykłady:
 
     print("\n" + "=" * 60)
     print("🎉 Gotowe! Pliki .npy są gotowe do użycia w pipeline trenowania.")
-    print("   Następny krok: python run_pipeline.py --keypoints_dir <folder> --exercise pullup_overhand")
+    print("   Następny krok: python run_pipeline.py --keypoints_dir <folder> --exercise pullup")
 
 
 if __name__ == "__main__":

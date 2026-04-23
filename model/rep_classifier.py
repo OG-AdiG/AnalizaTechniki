@@ -44,6 +44,12 @@ class RepClassifier:
     na 1 powtórzenie zamiast ciągłego skakania klas.
     """
 
+    # Minimalny ramp-up (klatek kontekstu przed pierwszym ruchem)
+    MIN_RAMP_FRAMES = 5
+
+    # Domyślny overlap na koniec repa (klatek do przechowania jako kontekst następnego)
+    DEFAULT_OVERLAP = 5
+
     def __init__(self, exercise: str = ACTIVE_EXERCISE,
                  model_path: str = None,
                  model_type: str = "tflite"):
@@ -66,6 +72,9 @@ class RepClassifier:
 
         # Historia wyników repów
         self.rep_results = []
+
+        # Historia długości repów (do dynamicznego overlap)
+        self.rep_durations = []
 
         # Model techniki
         self.model_type = model_type
@@ -95,6 +104,23 @@ class RepClassifier:
             self.model.eval()
         else:
             raise ValueError(f"Nieznany typ modelu: {model_type}")
+
+    def _get_adaptive_overlap(self) -> int:
+        """
+        Oblicza dynamiczny overlap na podstawie historii długości repów.
+
+        Overlap = 10% średniej długości repa, min MIN_RAMP_FRAMES.
+        Dzięki temu:
+        - Szybkie ćwiczenia (bicep curl ~40 kl.) → overlap ~4-5 klatek
+        - Wolne ćwiczenia (pullup ~90 kl.) → overlap ~9 klatek
+        - Brak historii → domyślnie DEFAULT_OVERLAP
+        """
+        if not self.rep_durations:
+            return self.DEFAULT_OVERLAP
+
+        avg_duration = np.mean(self.rep_durations[-5:])  # Ostatnich 5 repów
+        overlap = int(avg_duration * 0.10)
+        return max(self.MIN_RAMP_FRAMES, min(overlap, 15))
 
     def process_frame(self, keypoints_21: np.ndarray) -> dict:
         """
@@ -133,18 +159,25 @@ class RepClassifier:
         # === Detekcja startu ćwiczenia ===
         # Gdy RepCounter wykryje pierwsze przejście progu down (just_started),
         # oznacza to, że osoba właśnie zaczęła ruch — wcześniejsze klatki
-        # to setup (ustawianie, podchodzenie). Zostawiamy ostatnie 30 klatek
-        # żeby faza "up" pierwszego repa nie została utracona.
+        # to setup (ustawianie, podchodzenie, przeciąganie).
+        #
+        # Zachowujemy TYLKO mały ramp-up (MIN_RAMP_FRAMES) zamiast
+        # pełnego SEQUENCE_LENGTH — dzięki temu bufor pierwszego repa
+        # nie jest zaśmiecony klatkami z podchodzenia do drążka / ławki.
+        # Model i tak resizuje sekwencję do SEQUENCE_LENGTH, więc
+        # krótszy bufor zostanie rozciągnięty, a nie dopchany setupem.
         if rep_state.get("just_started", False):
-            keep = min(SEQUENCE_LENGTH, len(self.frame_buffer))
+            keep = min(self.MIN_RAMP_FRAMES, len(self.frame_buffer))
             discarded = len(self.frame_buffer) - keep
             self.frame_buffer = self.frame_buffer[-keep:]
             if discarded > 0:
-                print(f"  🧹 Odrzucono {discarded} klatek setup z bufora (zachowano {keep})")
+                print(f"  🧹 Start ćwiczenia — odrzucono {discarded} klatek setup "
+                      f"(zachowano {keep} kl. ramp-up)")
 
         if rep_state["new_rep"] or rep_state.get("partial_rep", False):
             # Rep ukończony (pełny lub partial) → klasyfikuj buforowane klatki
             is_partial = rep_state.get("partial_rep", False)
+            rep_frame_count = len(self.frame_buffer)
             result = self._classify_buffered_rep(rep_state)
             result["is_partial"] = is_partial
 
@@ -154,18 +187,20 @@ class RepClassifier:
                 self.rep_counter.rep_count = max(0, self.rep_counter.rep_count - 1)
                 print(f"  ⏩ Sklasyfikowano jako setup — nie liczę jako rep")
                 # Nie dodajemy do rep_results, czyścimy bufor i idziemy dalej
-                overlap = min(5, len(self.frame_buffer))
+                overlap = self._get_adaptive_overlap()
                 self.frame_buffer = self.frame_buffer[-overlap:]
                 return None
 
             self.rep_results.append(result)
 
+            # Zapisz długość repa do historii (do adaptacyjnego overlap)
+            self.rep_durations.append(rep_frame_count)
+
             if is_partial:
                 print(f"  ⚡ Partial rep wykryty → klasyfikacja: {result['class_name']}")
 
-            # Zachowaj ostatnich kilka klatek jako start nowego repa
-            # (overlap pomaga z kontekstem)
-            overlap = min(5, len(self.frame_buffer))
+            # Zachowaj adaptacyjny overlap jako kontekst następnego repa
+            overlap = self._get_adaptive_overlap()
             self.frame_buffer = self.frame_buffer[-overlap:]
 
             return result
@@ -358,6 +393,7 @@ class RepClassifier:
         self.rep_counter.reset()
         self.frame_buffer = []
         self.rep_results = []
+        self.rep_durations = []
 
     def get_current_state(self) -> dict:
         """Zwraca bieżący stan (do wyświetlania na ekranie)."""

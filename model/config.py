@@ -142,7 +142,7 @@ MIN_REP_FRAMES = 10  # 10 klatek @ 30 FPS ≈ 0.34s min między repami
 # Zabezpieczenie: jeśli counter liczy > MAX, to sensor noise
 MAX_REPS_PER_MINUTE = {
     "pushup": 40,
-    "pullup_overhand": 25,
+    "pullup": 25,
 }
 
 # Domyślny sufit jeśli ćwiczenie nie ma zdefiniowanego
@@ -170,27 +170,25 @@ PARTIAL_REP_MIN_AMPLITUDE = 20.0
 REVERSAL_DEADBAND = 0.5
 
 # ============================================================
-# DEFINICJE ĆWICZEŃ — 2 ćwiczenia z klasą "setup"
+# DEFINICJE ĆWICZEŃ — 20 ćwiczeń, każde z klasą "setup"
 # ============================================================
 EXERCISE_CLASSES = {
     # -------------------------------------------------------
-    # PODCIĄGANIE NACHWYTEM (PULL-UP OVERHAND)
+    # 1. PODCIĄGANIE (PULL-UP)
     # -------------------------------------------------------
-    "pullup_overhand": {
+    "pullup": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "asymmetric_pull",
-            3: "partial_rom_top",
-            4: "partial_rom_bottom",
-            5: "kipping",
-            6: "chicken_neck",
+            2: "kipping",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "chicken_neck",
+            6: "asymmetric_pull",
         },
         "num_classes": 7,
-
         "key_landmarks": {
-            "nose": 0,
-            "left_ear": 1,       "right_ear": 2,
+            "nose": 0, "left_ear": 1, "right_ear": 2,
             "left_shoulder": 3,  "right_shoulder": 4,
             "left_elbow": 5,     "right_elbow": 6,
             "left_wrist": 7,     "right_wrist": 8,
@@ -199,12 +197,11 @@ EXERCISE_CLASSES = {
             "left_ankle": 13,    "right_ankle": 14,
             "sternum": 19,       "mid_hip": 20,
         },
-
         "angle_rules": {
             "elbow_angle": {
                 "joints": ("shoulder", "elbow", "wrist"),
-                "correct_range_top": (30, 80),       # Na górze — łokcie zgięte
-                "correct_range_bottom": (160, 180),   # Na dole — ramiona proste
+                "correct_range_top": (30, 80),
+                "correct_range_bottom": (160, 180),
             },
             "shoulder_angle": {
                 "joints": ("hip", "shoulder", "elbow"),
@@ -222,67 +219,15 @@ EXERCISE_CLASSES = {
                 "error_name": "naciąganie głowy (chicken neck)",
             },
         },
-
         "rep_phases": {
             "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 150,     # Przekroczenie tego w górę zamyka powtórzenie (powrót do zwisu)
-            "down_threshold": 80,    # Przekroczenie tego w dół zaczyna fazę właściwą (podciągnięcie)
+            "up_threshold": 150,
+            "down_threshold": 80,
         },
     },
 
     # -------------------------------------------------------
-    # POMPKA (PUSH-UP)
-    # Nazwy klas = nazwy folderów w D:\Pushups
-    # -------------------------------------------------------
-    "pushup": {
-        "labels": {
-            0: "setup",
-            1: "correct",
-            2: "flared_elbows",
-            3: "high_hips",
-            4: "partial_rom_bottom",
-            5: "partial_rom_top",
-            6: "sagging_hips",
-        },
-        "num_classes": 7,
-
-        "key_landmarks": {
-            "left_shoulder": 3,  "right_shoulder": 4,
-            "left_elbow": 5,     "right_elbow": 6,
-            "left_wrist": 7,     "right_wrist": 8,
-            "left_hip": 9,       "right_hip": 10,
-            "left_knee": 11,     "right_knee": 12,
-            "left_ankle": 13,    "right_ankle": 14,
-            "sternum": 19,       "mid_hip": 20,
-        },
-
-        "angle_rules": {
-            "elbow_angle": {
-                "joints": ("shoulder", "elbow", "wrist"),
-                "correct_range_bottom": (70, 110),   # Na dole pompki
-                "correct_range_top": (160, 180),      # Na górze pompki
-            },
-            "body_alignment": {
-                "joints": ("shoulder", "hip", "ankle"),
-                "correct_range": (160, 180),
-                "error_name": "opadające/uniesione biodra",
-            },
-            "shoulder_angle": {
-                "joints": ("hip", "shoulder", "elbow"),
-                "correct_range_bottom": (30, 75),
-                "error_name": "zbyt szerokie/wąskie ramiona",
-            },
-        },
-
-        "rep_phases": {
-            "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 125,      # Obniżone z 150 — łapiemy partial ROM repy
-            "down_threshold": 100,    # i zostawiamy klasyfikację modelowi TCN
-        },
-    },
-
-    # -------------------------------------------------------
-    # DIPY (POMPKI NA PORĘCZACH)
+    # 2. DIPY
     # -------------------------------------------------------
     "dips": {
         "labels": {
@@ -296,7 +241,6 @@ EXERCISE_CLASSES = {
             7: "no_retraction",
         },
         "num_classes": 8,
-
         "key_landmarks": {
             "left_shoulder": 3,  "right_shoulder": 4,
             "left_elbow": 5,     "right_elbow": 6,
@@ -306,7 +250,6 @@ EXERCISE_CLASSES = {
             "left_ankle": 13,    "right_ankle": 14,
             "sternum": 19,       "mid_hip": 20,
         },
-
         "angle_rules": {
             "elbow_angle": {
                 "joints": ("shoulder", "elbow", "wrist"),
@@ -324,12 +267,349 @@ EXERCISE_CLASSES = {
                 "error_name": "flared elbows (łokcie na zewnątrz)",
             },
         },
-
         "rep_phases": {
             "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 140,     # Ręce prawie proste = koniec fazy wyciskania
-            "down_threshold": 100,   # Ręce zgięte = początek fazy w dół
+            "up_threshold": 140,
+            "down_threshold": 100,
         },
+    },
+
+    # -------------------------------------------------------
+    # 3. POMPKI (PUSH-UP)
+    # -------------------------------------------------------
+    "pushup": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "flared_elbows",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "high_hips",
+            6: "sagging_hips",
+        },
+        "num_classes": 7,
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_bottom": (70, 110),
+                "correct_range_top": (160, 180),
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "ankle"),
+                "correct_range": (160, 180),
+                "error_name": "opadające/uniesione biodra",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (30, 75),
+                "error_name": "zbyt szerokie/wąskie ramiona",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 125,
+            "down_threshold": 100,
+        },
+    },
+
+    # -------------------------------------------------------
+    # 4. UNOSZENIE NÓG (LEG RAISE)
+    # -------------------------------------------------------
+    "leg_raise": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "banana_bottom",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "no_retraction",
+            6: "bent_arms",
+        },
+        "num_classes": 7,
+        "angle_rules": {},   # TODO: skalibrować
+        "rep_phases": {},     # TODO: skalibrować
+    },
+
+    # -------------------------------------------------------
+    # 5. WYCISKANIE NA KLATĘ (BENCH PRESS)
+    # -------------------------------------------------------
+    "bench_press": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "butt_off_bench",
+            3: "no_arch",
+            4: "wide_elbows",
+            5: "one_arm_pushes_more",
+        },
+        "num_classes": 6,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 6. MARTWY CIĄG (DEADLIFT)
+    # -------------------------------------------------------
+    "deadlift": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "asymmetric_pull",
+            3: "shoulders_not_retracted",
+            4: "hips_same_as_knees",
+            5: "banana_back",
+        },
+        "num_classes": 6,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 7. SIADY (SQUAT)
+    # -------------------------------------------------------
+    "squat": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "half_rep_top",
+            3: "half_rep_bottom",
+            4: "knees_caving_in",
+            5: "rounded_back",
+        },
+        "num_classes": 6,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 8. UGINANIE NA BICEPS (BICEP CURL)
+    # -------------------------------------------------------
+    "bicep_curl": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "half_rep_top",
+            3: "half_rep_bottom",
+            4: "asymmetric_pull",
+            5: "kipping",
+            6: "flared_elbows",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 9. SCYZORYKI (V-UP)
+    # -------------------------------------------------------
+    "v_up": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "legs_on_ground",
+            3: "loose_core",
+            4: "half_rep",
+        },
+        "num_classes": 5,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 10. UNOSZENIE HANTLI (LATERAL RAISE)
+    # -------------------------------------------------------
+    "lateral_raise": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "half_rep_top",
+            3: "half_rep_bottom",
+            4: "straight_arms",
+            5: "too_bent_arms",
+            6: "shoulders_not_retracted",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 11. OHP (OVERHEAD PRESS)
+    # -------------------------------------------------------
+    "ohp": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "shoulders_not_retracted",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "one_arm_pushes_more",
+            6: "banana_back",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 12. WIOSŁOWANIE (ROW)
+    # -------------------------------------------------------
+    "row": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "pulling_with_arms",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "swinging",
+            6: "asymmetric_pull",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 13. WYCISKANIE FRANCUSKIE (FRENCH PRESS / SKULL CRUSHER)
+    # -------------------------------------------------------
+    "french_press": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "shoulders_elbows_aligned",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+        },
+        "num_classes": 5,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 14. ROZPIĘTKI (FLY)
+    # -------------------------------------------------------
+    "fly": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "straight_arms",
+            3: "bent_arms",
+            4: "half_rep_top",
+            5: "half_rep_bottom",
+        },
+        "num_classes": 6,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 15. MUSCLE UP
+    # -------------------------------------------------------
+    "muscle_up": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "kipping",
+            3: "wide_elbows",
+            4: "alternating_arms",
+        },
+        "num_classes": 5,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 16. L-SIT
+    # -------------------------------------------------------
+    "l_sit": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "bent_legs",
+            3: "head_in_shoulders",
+            4: "hips_forward",
+        },
+        "num_classes": 5,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 17. WYKROKI (LUNGE)
+    # -------------------------------------------------------
+    "lunge": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "half_rep_top",
+            3: "half_rep_bottom",
+            4: "knee_inward",
+            5: "knee_outward",
+        },
+        "num_classes": 6,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 18. HIP THRUST
+    # -------------------------------------------------------
+    "hip_thrust": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "banana_back",
+            3: "half_rep_top",
+            4: "half_rep_bottom",
+            5: "feet_too_close",
+            6: "feet_too_far",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 19. PLANK
+    # -------------------------------------------------------
+    "plank": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "hips_low",
+            3: "hips_high",
+            4: "too_far_forward",
+            5: "too_far_back",
+            6: "shoulders_not_retracted",
+        },
+        "num_classes": 7,
+        "angle_rules": {},
+        "rep_phases": {},
+    },
+
+    # -------------------------------------------------------
+    # 20. HOLLOW BODY
+    # -------------------------------------------------------
+    "hollow_body": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "loose_core",
+            3: "shoulder_blades_on_ground",
+            4: "chest_hidden",
+        },
+        "num_classes": 5,
+        "angle_rules": {},
+        "rep_phases": {},
     },
 }
 

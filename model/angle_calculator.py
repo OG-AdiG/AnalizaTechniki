@@ -5,8 +5,9 @@ Moduł odpowiada za:
 - Wyznaczanie kątów w kluczowych stawach
 - Porównywanie kątów z wzorcami biomechanicznymi
 - Generowanie informacji o błędach technicznych
+- Detekcję asymetrii lewo/prawo
 
-Obsługuje 3 ćwiczenia: squat, push-up, lunge.
+Obsługuje wszystkie ćwiczenia zdefiniowane w EXERCISE_CLASSES (config.py).
 Format danych: 21 keypointów × (x, y, confidence).
 """
 
@@ -38,7 +39,9 @@ def calculate_angle(point_a: np.ndarray,
     bc = c - b
 
     dot = np.dot(ba, bc)
-    norm_product = np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8
+    norm_product = np.linalg.norm(ba) * np.linalg.norm(bc)
+    if norm_product < 1e-8:
+        return 0.0
 
     cos_angle = np.clip(dot / norm_product, -1.0, 1.0)
     angle = np.degrees(np.arccos(cos_angle))
@@ -65,7 +68,7 @@ class ExerciseAngleAnalyzer:
                              f"Dostępne: {list(EXERCISE_CLASSES.keys())}")
         self.exercise = exercise
         self.config = EXERCISE_CLASSES[exercise]
-        self.landmarks_map = self.config["key_landmarks"]
+        self.landmarks_map = self.config.get("key_landmarks", {})
         self.angle_rules = self.config["angle_rules"]
 
     def get_landmark(self, frame: np.ndarray, side: str, joint: str) -> np.ndarray:
@@ -160,22 +163,56 @@ class ExerciseAngleAnalyzer:
                     results["angles"][f"{side}_{rule_name}"] = angle
 
             # Oblicz średni kąt
-            valid_angles = [v for v in angles_both_sides.values() if not np.isnan(v)]
-            if valid_angles:
-                avg = np.mean(valid_angles)
-                results["angles"][f"avg_{rule_name}"] = avg
+            valid_angles = list(angles_both_sides.values())
+            if not valid_angles:
+                continue
 
-                # Sprawdź zakresy
-                if "correct_range" in rule_config:
-                    min_a, max_a = rule_config["correct_range"]
-                    if avg < min_a or avg > max_a:
-                        results["errors"].append({
-                            "type": rule_name,
-                            "message": rule_config.get("error_name", rule_name),
-                            "angle": avg,
-                            "expected_range": (min_a, max_a),
-                        })
-                        results["is_correct"] = False
+            avg = np.mean(valid_angles)
+            results["angles"][f"avg_{rule_name}"] = avg
+
+            # --- Detekcja asymetrii L/R ---
+            if len(valid_angles) == 2:
+                diff = abs(valid_angles[0] - valid_angles[1])
+                results["angles"][f"asymmetry_{rule_name}"] = diff
+                max_asymmetry = rule_config.get("max_asymmetry", 15.0)
+                if diff > max_asymmetry:
+                    results["errors"].append({
+                        "type": f"asymmetry_{rule_name}",
+                        "message": f"Asymetria w {rule_name}: {diff:.1f}°",
+                        "angle_diff": diff,
+                    })
+                    results["is_correct"] = False
+
+            # --- Sprawdź zakres ogólny ---
+            if "correct_range" in rule_config:
+                min_a, max_a = rule_config["correct_range"]
+                if avg < min_a or avg > max_a:
+                    results["errors"].append({
+                        "type": rule_name,
+                        "message": rule_config.get("error_name", rule_name),
+                        "angle": avg,
+                        "expected_range": (min_a, max_a),
+                    })
+                    results["is_correct"] = False
+
+            # --- Sprawdź zakresy fazowe (top/bottom) ---
+            range_top = rule_config.get("correct_range_top")
+            range_bottom = rule_config.get("correct_range_bottom")
+            if range_top or range_bottom:
+                in_any_range = False
+                if range_top and range_top[0] <= avg <= range_top[1]:
+                    in_any_range = True
+                if range_bottom and range_bottom[0] <= avg <= range_bottom[1]:
+                    in_any_range = True
+                if not in_any_range:
+                    results["errors"].append({
+                        "type": rule_name,
+                        "message": rule_config.get("error_name", rule_name),
+                        "angle": avg,
+                        "expected_range_top": range_top,
+                        "expected_range_bottom": range_bottom,
+                    })
+                    results["is_correct"] = False
 
         return results
 
@@ -231,7 +268,7 @@ class ExerciseAngleAnalyzer:
 
 if __name__ == "__main__":
     # Test z losowymi danymi — 3 ćwiczenia
-    for exercise in ["pullup_overhand", "pushup"]:
+    for exercise in ["pullup", "pushup", "dips"]:
         print(f"\n{'='*50}")
         print(f"TEST: {exercise.upper()}")
         print(f"{'='*50}")

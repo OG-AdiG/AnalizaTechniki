@@ -49,20 +49,29 @@ class RepCounter:
     def __init__(self, exercise: str = ACTIVE_EXERCISE):
         self.exercise = exercise
         self.config = EXERCISE_CLASSES[exercise]
-        self.rep_config = self.config["rep_phases"]
-        self.landmarks = self.config["key_landmarks"]
+        self.rep_config = self.config.get("rep_phases", {})
+        self.landmarks = self.config.get("key_landmarks", {})
 
         # Inicjalizuj analizator kątów
         self.angle_analyzer = ExerciseAngleAnalyzer(exercise)
 
         # Progi faz ruchu (początkowe — mogą być nadpisane przez adaptację)
-        self.up_threshold = self.rep_config["up_threshold"]
-        self.down_threshold = self.rep_config["down_threshold"]
+        # Jeśli ćwiczenie nie ma skalibrowanych progów, używamy domyślnych
+        # opartych na kącie łokcia (najczęstszy tracking joint)
+        if self.rep_config:
+            self.up_threshold = self.rep_config["up_threshold"]
+            self.down_threshold = self.rep_config["down_threshold"]
+            self.tracking_joints = self.rep_config["angle_joint"]
+        else:
+            # Domyślne progi — sensowne dla większości ćwiczeń z ruchem ramion
+            self.up_threshold = 140
+            self.down_threshold = 90
+            self.tracking_joints = ("shoulder", "elbow", "wrist")
+            print(f"  ⚠️ Ćwiczenie '{exercise}' nie ma skalibrowanych rep_phases — "
+                  f"używam domyślnych progów (up={self.up_threshold}°, down={self.down_threshold}°)")
+
         self.initial_up_threshold = self.up_threshold
         self.initial_down_threshold = self.down_threshold
-
-        # Śledzony kąt
-        self.tracking_joints = self.rep_config["angle_joint"]
 
         # Parametry filtru
         self.ema_alpha = EMA_ALPHA
