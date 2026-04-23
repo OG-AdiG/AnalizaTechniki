@@ -134,10 +134,10 @@ def train(exercise: str = ACTIVE_EXERCISE):
     # Weighted cross-entropy (kompensacja nierównowagi klas)
     class_weights = compute_class_weights(train_loader, num_classes, device)
     print(f"   Wagi klas: {class_weights.cpu().tolist()}")
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
     # Optymalizator
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", patience=5, factor=0.5
     )

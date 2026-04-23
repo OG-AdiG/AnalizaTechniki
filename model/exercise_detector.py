@@ -134,11 +134,17 @@ class HeuristicExerciseDetector:
         # PODCIĄGANIE: ciało wertykalne, nadgarstki POWYŻEJ barków (y mniejszy)
         wrists_above_shoulders = avg_wrist_y < avg_shoulder_y - 0.1
 
+        # DIPY: ciało wertykalne, nadgarstki PONIŻEJ barków i w okolicach bioder
+        wrists_below_shoulders = avg_wrist_y > avg_shoulder_y + 0.1
+        wrists_near_hips = abs(avg_wrist_y - avg_hip_y) < 0.25
+
         if body_angle > 150 and wrists_at_shoulder_level:
             return "pushup"
         elif wrists_above_shoulders and avg_shoulder_y < avg_hip_y:
             # W układzie 0-1: y=0 to góra, więc shoulder_y < hip_y = barki wyżej
             return "pullup_overhand"
+        elif wrists_below_shoulders and wrists_near_hips and avg_shoulder_y < avg_hip_y:
+            return "dips"
 
         return "unknown"
 

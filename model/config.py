@@ -109,7 +109,7 @@ SEQUENCE_STRIDE = 10         # Przesunięcie sliding window
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-3
 NUM_EPOCHS = 100
-DROPOUT_RATE = 0.3
+DROPOUT_RATE = 0.5
 EARLY_STOPPING_PATIENCE = 15
 
 # Minimalna pewność detekcji keypointu (poniżej → punkt traktowany jako brak)
@@ -151,8 +151,8 @@ MAX_CONSECUTIVE_DROPOUTS = 5
 
 # --- Timeout fazy (NOWE) ---
 # Max klatek w jednej fazie (np. "down") zanim wymusimy granicę repa
-# 90 klatek = 3 sekundy przy 30 FPS
-MAX_PHASE_FRAMES = 90
+# 150 klatek = 5 sekund przy 30 FPS
+MAX_PHASE_FRAMES = 150
 
 # --- Detekcja partial repów (pół-powtórzeń) ---
 # Min. amplituda (°) żeby uznać ruch za partial rep (niższa niż full rep)
@@ -216,8 +216,8 @@ EXERCISE_CLASSES = {
 
         "rep_phases": {
             "angle_joint": ("shoulder", "elbow", "wrist"),
-            "up_threshold": 80,      # Łokcie zgięte = góra
-            "down_threshold": 150,   # Łokcie proste = dół
+            "up_threshold": 150,     # Przekroczenie tego w górę zamyka powtórzenie (powrót do zwisu)
+            "down_threshold": 80,    # Przekroczenie tego w dół zaczyna fazę właściwą (podciągnięcie)
         },
     },
 
@@ -269,6 +269,57 @@ EXERCISE_CLASSES = {
             "angle_joint": ("shoulder", "elbow", "wrist"),
             "up_threshold": 125,      # Obniżone z 150 — łapiemy partial ROM repy
             "down_threshold": 100,    # i zostawiamy klasyfikację modelowi TCN
+        },
+    },
+
+    # -------------------------------------------------------
+    # DIPY (POMPKI NA PORĘCZACH)
+    # -------------------------------------------------------
+    "dips": {
+        "labels": {
+            0: "setup",
+            1: "correct",
+            2: "banana_back",
+            3: "flared_elbows",
+            4: "half_rep_bottom",
+            5: "half_rep_top",
+            6: "kipping",
+            7: "no_retraction",
+        },
+        "num_classes": 8,
+
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_bottom": (70, 90),
+                "correct_range_top": (160, 180),
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "ankle"),
+                "correct_range": (150, 180),
+                "error_name": "kipping / bujanie",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (20, 60),
+                "error_name": "flared elbows (łokcie na zewnątrz)",
+            },
+        },
+
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 140,     # Ręce prawie proste = koniec fazy wyciskania
+            "down_threshold": 100,   # Ręce zgięte = początek fazy w dół
         },
     },
 }

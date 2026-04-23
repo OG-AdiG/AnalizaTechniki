@@ -167,13 +167,14 @@ class RepClassifier:
     def _classify_buffered_rep(self, rep_state: dict) -> dict:
         """
         Klasyfikuje buforowane klatki jako jeden rep.
-        Resize'uje do SEQUENCE_LENGTH i przepuszcza przez model.
-
-        UWAGA: Dane treningowe (.npy) są SUROWE (bez normalizacji),
-        więc tutaj też NIE normalizujemy — model oczekuje raw keypointów.
+        Normalizuje dane, resize'uje do SEQUENCE_LENGTH i przepuszcza przez model.
         """
         frames = np.array(self.frame_buffer, dtype=np.float32)  # (T, 21, 3)
         raw_frame_count = frames.shape[0]
+
+        # Normalizacja i filtrowanie szumu (muszą być takie same jak podczas treningu!)
+        frames = normalize_keypoints(frames)
+        frames = filter_low_confidence(frames)
 
         # Resize do SEQUENCE_LENGTH (padding lub subsampling)
         frames = self._resize_sequence(frames, SEQUENCE_LENGTH)

@@ -171,7 +171,7 @@ def resize_sequence(keypoints: np.ndarray,
                     target_len: int = SEQUENCE_LENGTH) -> np.ndarray:
     """
     Resize sekwencji do target_len klatek (dla single_rep_mode).
-    - Jeśli za krótka: zero-padding na końcu
+    - Jeśli za krótka: pad ostatnią klatką
     - Jeśli za długa: równomierne subsamplowanie
     - Jeśli równa: bez zmian
     """
@@ -180,11 +180,12 @@ def resize_sequence(keypoints: np.ndarray,
     if num_frames == target_len:
         return keypoints
     elif num_frames < target_len:
-        padded = np.zeros(
+        padded = np.empty(
             (target_len, keypoints.shape[1], keypoints.shape[2]),
             dtype=np.float32,
         )
         padded[:num_frames] = keypoints
+        padded[num_frames:] = keypoints[-1]
         return padded
     else:
         indices = np.linspace(0, num_frames - 1, target_len, dtype=int)
