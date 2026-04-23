@@ -242,11 +242,16 @@ class RepCounter:
             return False
 
         # Sufit: max reps/min
-        elapsed_minutes = self.frame_index / (TARGET_FPS * 60) if TARGET_FPS > 0 else 1
-        if elapsed_minutes > 0:
-            current_rate = self.rep_count / elapsed_minutes
-            if current_rate >= self.max_reps_per_minute:
-                return False
+        # Licz rate dopiero gdy mamy sensowne okno obserwacji (>=5s),
+        # inaczej pierwsze repy (np. po 20 klatkach = 0.66s) wyglądają
+        # jak 90 rep/min i blokują zliczanie.
+        min_window_frames = max(TARGET_FPS * 5, self.min_rep_frames * 2)
+        if self.frame_index >= min_window_frames:
+            elapsed_minutes = self.frame_index / (TARGET_FPS * 60)
+            if elapsed_minutes > 0:
+                current_rate = self.rep_count / elapsed_minutes
+                if current_rate >= self.max_reps_per_minute:
+                    return False
 
         return True
 
@@ -349,10 +354,17 @@ class RepCounter:
             self.frame_index += 1
             self.frames_in_current_rep += 1
 
-            # Jeśli za dużo dropoutów z rzędu — sygnał utracony
+            # Jeśli za dużo dropoutów z rzędu — sygnał utracony.
+            # Resetujemy śledzenie cyklu, żeby po odzyskaniu keypointów
+            # nie liczyć "duchowych" amplitud ze starych peak/valley.
             if self.consecutive_dropouts > self.max_consecutive_dropouts:
-                # Reset — nie da się śledzić
-                pass
+                self.angle_peak = None
+                self.angle_valley = None
+                self.integral = 0.0
+                self.prev_smooth = None
+                self.last_delta = 0.0
+                self.prev_direction = 0
+                self.reversal_valley = None
 
             return {
                 "rep_count": self.rep_count,

@@ -119,6 +119,14 @@ class RepClassifier:
         # Dodaj klatkę do bufora
         self.frame_buffer.append(keypoints_21.copy())
 
+        # Twardy limit bufora — zabezpieczenie przed memory leak, gdy
+        # osoba stoi w setupie przez długi czas i `exercise_started`
+        # nigdy nie zostaje wyzwolone. 10 sekund @ 30 FPS = 300 klatek
+        # to i tak wielokrotność SEQUENCE_LENGTH.
+        BUFFER_HARD_LIMIT = max(SEQUENCE_LENGTH * 10, 300)
+        if len(self.frame_buffer) > BUFFER_HARD_LIMIT:
+            self.frame_buffer = self.frame_buffer[-BUFFER_HARD_LIMIT:]
+
         # Aktualizuj RepCounter
         rep_state = self.rep_counter.update(keypoints_21)
 
@@ -128,7 +136,7 @@ class RepClassifier:
         # to setup (ustawianie, podchodzenie). Zostawiamy ostatnie 30 klatek
         # żeby faza "up" pierwszego repa nie została utracona.
         if rep_state.get("just_started", False):
-            keep = min(30, len(self.frame_buffer))
+            keep = min(SEQUENCE_LENGTH, len(self.frame_buffer))
             discarded = len(self.frame_buffer) - keep
             self.frame_buffer = self.frame_buffer[-keep:]
             if discarded > 0:
@@ -212,23 +220,30 @@ class RepClassifier:
                          target_len: int) -> np.ndarray:
         """
         Resize sekwencji do target_len klatek.
-        - Jeśli za krótka: zero-padding na końcu
+        - Jeśli za krótka: padding ostatnią klatką (spójnie z dataset.resize_sequence
+          używanym podczas treningu — zero-padding dawałby inną dystrybucję
+          danych w inferencji niż w treningu!)
         - Jeśli za długa: równomierne subsamplowanie
         """
         num_frames = frames.shape[0]
 
         if num_frames == target_len:
             return frames
+        elif num_frames == 0:
+            return np.zeros(
+                (target_len, frames.shape[1] if frames.ndim > 1 else 21,
+                 frames.shape[2] if frames.ndim > 2 else 3),
+                dtype=np.float32,
+            )
         elif num_frames < target_len:
-            # Zero-padding
-            padded = np.zeros(
+            padded = np.empty(
                 (target_len, frames.shape[1], frames.shape[2]),
                 dtype=np.float32,
             )
             padded[:num_frames] = frames
+            padded[num_frames:] = frames[-1]
             return padded
         else:
-            # Równomierne subsamplowanie
             indices = np.linspace(0, num_frames - 1, target_len, dtype=int)
             return frames[indices]
 
@@ -245,12 +260,14 @@ class RepClassifier:
                 and expected_shape[2] == INPUT_CHANNELS):
             model_input = np.transpose(model_input, (0, 2, 1))
 
-        model_input = model_input.astype(np.float32)
+        # Dopasuj dtype do modelu (FP16 po kwantyzacji → nie castuj na float32!)
+        expected_dtype = self.input_details[0]["dtype"]
+        model_input = model_input.astype(expected_dtype)
         self.interpreter.set_tensor(self.input_details[0]["index"], model_input)
         self.interpreter.invoke()
         logits = self.interpreter.get_tensor(
             self.output_details[0]["index"]
-        )[0]
+        )[0].astype(np.float32)
 
         return self._logits_to_result(logits)
 
