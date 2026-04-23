@@ -251,14 +251,24 @@ def load_dataset(exercise: str = ACTIVE_EXERCISE,
     # Sprawdź dostępne podkatalogi
     for label_id, label_name in labels_config.items():
         label_dir = os.path.join(exercise_dir, label_name)
+        effective_label_id = label_id  # Nie nadpisuj pętliowej zmiennej (Python
+                                       # binduje ją late — bugi w klauzurach)
 
         if not os.path.exists(label_dir):
-            # Fallback: binarny format (correct/error)
-            if label_id == 0:
+            # Fallback: binarny format (correct/error) — używane gdy mamy
+            # tylko dwie kategorie zamiast pełnej listy błędów.
+            if label_id == 0 or label_name == "correct":
                 label_dir = os.path.join(exercise_dir, "correct")
-            elif label_id >= 1:
+                effective_label_id = 0
+            else:
                 label_dir = os.path.join(exercise_dir, "error")
-                label_id = 1  # Binary fallback
+                # Wszystkie błędy mapujemy na jeden "zbiorczy" label — ale
+                # załadujemy je tylko raz (pierwsza iteracja z label_id != 0).
+                # Dla kolejnych iteracji z label_id > 1 pomijamy, żeby nie
+                # duplikować tych samych plików N razy.
+                if label_id > 1:
+                    continue
+                effective_label_id = 1
             if not os.path.exists(label_dir):
                 continue
 
@@ -276,12 +286,12 @@ def load_dataset(exercise: str = ACTIVE_EXERCISE,
                 # Każdy plik = 1 rep → resize do SEQUENCE_LENGTH
                 resized = resize_sequence(keypoints, SEQUENCE_LENGTH)
                 all_sequences.append(resized)
-                all_labels.append(label_id)
+                all_labels.append(effective_label_id)
             else:
                 # Legacy: sliding window
                 windows = create_sliding_windows(keypoints)
                 all_sequences.extend(windows)
-                all_labels.extend([label_id] * len(windows))
+                all_labels.extend([effective_label_id] * len(windows))
 
         if npy_files:
             icon = "✅" if label_name == "correct" else "⚙️" if label_name == "setup" else "❌"

@@ -36,6 +36,9 @@ def compute_class_weights(train_loader, num_classes: int, device) -> torch.Tenso
     """
     Oblicza wagi klas na podstawie częstotliwości w zbiorze treningowym.
     Rzadsze klasy dostają wyższe wagi.
+
+    Jeśli klasa nie ma żadnych próbek, przypisujemy jej neutralną wagę 1.0
+    (inaczej 1 / eps dawałoby wagi rzędu 1e6 — destabilizacja gradientu).
     """
     class_counts = torch.zeros(num_classes)
 
@@ -43,10 +46,19 @@ def compute_class_weights(train_loader, num_classes: int, device) -> torch.Tenso
         for label in labels:
             class_counts[label.item()] += 1
 
-    # Inverse frequency weighting
     total = class_counts.sum()
-    weights = total / (num_classes * class_counts + 1e-6)
-    weights = weights / weights.sum() * num_classes  # Normalizacja
+    weights = torch.ones(num_classes)
+
+    present = class_counts > 0
+    if present.any() and total > 0:
+        weights[present] = total / (num_classes * class_counts[present])
+
+    missing = (~present).nonzero(as_tuple=True)[0].tolist()
+    if missing:
+        missing_names = ", ".join(str(i) for i in missing)
+        print(f"   ⚠ Brak próbek dla klas: [{missing_names}] — ustawiono wagę 1.0")
+
+    weights = weights / weights.sum() * num_classes
 
     return weights.to(device)
 

@@ -207,12 +207,13 @@ class ExerciseClassifierModel:
                 and expected_shape[2] == INPUT_CHANNELS):
             model_input = np.transpose(model_input, (0, 2, 1))
 
-        model_input = model_input.astype(np.float32)
+        expected_dtype = self.input_details[0]["dtype"]
+        model_input = model_input.astype(expected_dtype)
         self.interpreter.set_tensor(self.input_details[0]["index"], model_input)
         self.interpreter.invoke()
         logits = self.interpreter.get_tensor(
             self.output_details[0]["index"]
-        )[0]
+        )[0].astype(np.float32)
 
         pred_idx = int(np.argmax(logits))
         if pred_idx < len(self.exercise_names):

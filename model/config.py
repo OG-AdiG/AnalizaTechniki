@@ -18,10 +18,19 @@ KEYPOINTS_DIR = os.path.join(DATA_DIR, "keypoints")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
 
 # Ścieżka do repozytorium modelu pose estimation (SimCC)
-POSE_MODEL_DIR = r"c:\Users\Adrian\Desktop\Przedsiewziecie_inzynierskie_modele_ai\pose_training"
+# Konfigurowalna przez zmienną środowiskową POSE_MODEL_DIR,
+# domyślnie ../pose_training (side-by-side z tym repo).
+POSE_MODEL_DIR = os.environ.get(
+    "POSE_MODEL_DIR",
+    os.path.join(os.path.dirname(PROJECT_ROOT), "pose_training"),
+)
 
 # Ścieżka do filmów treningowych z pojedynczymi powtórzeniami
-PUSHUP_VIDEOS_DIR = r"D:\Pushups"
+# Konfigurowalna przez zmienną środowiskową PUSHUP_VIDEOS_DIR.
+PUSHUP_VIDEOS_DIR = os.environ.get(
+    "PUSHUP_VIDEOS_DIR",
+    os.path.join(DATA_DIR, "raw_videos", "pushup"),
+)
 
 # ============================================================
 # KEYPOINTS — WSPÓLNY FORMAT ZESPOŁOWY (z config.py kolegi)
