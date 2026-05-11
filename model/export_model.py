@@ -249,26 +249,37 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
                      sequence_length: int = SEQUENCE_LENGTH,
                      fp16: bool = False):
     """
-    Alternatywna ścieżka eksportu: PyTorch → ONNX → onnx2tf → TFLite.
+    Alternatywna ścieżka eksportu: PyTorch → ONNX → onnx2tf (SavedModel)
+    → tf.lite.TFLiteConverter → TFLite.
 
     Używana gdy litert-torch jest popsuty (np. nowe API bez fp16 support).
     Dla naszego TCN (Conv1d, BatchNorm1d, Linear, AdaptiveAvgPool1d)
     pipeline jest stabilny — to wszystko standardowe ops bez problemów
     NCHW↔NHWC.
+
+    UWAGA: dla --fp16 robimy WEIGHT-ONLY FP16, nie full-FP16. Powody:
+    - Standardowy `tf.lite.Interpreter` na CPU NIE wspiera full-FP16
+      Conv (`input_type == kTfLiteFloat32 || ...` not true) i pęka przy
+      `allocate_tensors()`.
+    - Weight-only FP16: wagi w pliku jako FP16 (2× mniejsze), aktywacje
+      FP32 z dequantyzacją wag on-the-fly. Działa na CPU TFLite, GPU
+      delegate, NNAPI — wszędzie.
+    - To dokładnie ten sam tryb co stary `_ai_edge_converter_flags`
+      z target_spec.supported_types=[tf.float16].
     """
     import tempfile
-    import shutil
 
     try:
         import onnx
         import onnx2tf
+        import tensorflow as tf
     except ImportError as e:
         raise ImportError(
             "Ścieżka ONNX wymaga: pip install onnx onnx2tf tensorflow"
         ) from e
 
-    precision = "float16" if fp16 else "float32"
-    print(f"🔄 Konwersja PyTorch → ONNX → TFLite (onnx2tf, {precision})...")
+    precision = "FP16 weight-only" if fp16 else "FP32"
+    print(f"🔄 Konwersja PyTorch → ONNX → SavedModel → TFLite ({precision})...")
 
     sample_input = torch.randn(1, input_channels, sequence_length)
     with torch.no_grad():
@@ -294,30 +305,32 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
         onnx.checker.check_model(onnx_path)
         print(f"   ✅ ONNX zapisany: {os.path.getsize(onnx_path)/1024:.0f} KB")
 
-        out_dir = os.path.join(tmpdir, "tf_out")
-        os.makedirs(out_dir, exist_ok=True)
+        saved_model_dir = os.path.join(tmpdir, "tf_out")
+        os.makedirs(saved_model_dir, exist_ok=True)
 
+        # onnx2tf z output_signaturedefs=True wypluwa SavedModel obok
+        # gotowych .tflite. Bierzemy SavedModel — własną kwantyzację
+        # robimy przez TFLiteConverter, żeby dostać weight-only FP16
+        # zamiast full-FP16.
         onnx2tf.convert(
             input_onnx_file_path=onnx_path,
-            output_folder_path=out_dir,
+            output_folder_path=saved_model_dir,
             output_signaturedefs=True,
             non_verbose=True,
             output_h5=False,
             output_keras_v3=False,
             copy_onnx_input_output_names_to_tflite=True,
         )
+        print(f"   ✅ SavedModel: {saved_model_dir}")
 
-        suffix = "float16" if fp16 else "float32"
-        candidate = os.path.join(out_dir, f"model_{suffix}.tflite")
-        if not os.path.exists(candidate):
-            tflite_files = [f for f in os.listdir(out_dir) if f.endswith(".tflite")]
-            if not tflite_files:
-                raise RuntimeError(f"onnx2tf nie wygenerował żadnego .tflite w {out_dir}")
-            preferred = [f for f in tflite_files if suffix in f] or tflite_files
-            candidate = os.path.join(out_dir, preferred[0])
+        converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
+        if fp16:
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_types = [tf.float16]
 
-        shutil.copy2(candidate, tflite_path)
-        print(f"   ✅ Wybrano: {os.path.basename(candidate)}")
+        tflite_bytes = converter.convert()
+        with open(tflite_path, "wb") as f:
+            f.write(tflite_bytes)
 
     file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
     print(f"\n{'='*60}")
@@ -325,7 +338,9 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
     print(f"  Rozmiar:      {file_size_mb:.2f} MB ({precision})")
     print(f"  Wejście:      [1, {input_channels}, {sequence_length}]")
     print(f"  Wyjście:      [1, num_classes]")
-    print(f"  Pipeline:     PyTorch → ONNX → onnx2tf → TFLite")
+    print(f"  Pipeline:     PyTorch → ONNX → SavedModel → TFLiteConverter")
+    if fp16:
+        print(f"  Uwaga:        Wagi FP16, aktywacje FP32 (CPU+GPU+NNAPI OK)")
     print(f"{'='*60}")
 
 
