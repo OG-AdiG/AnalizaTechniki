@@ -214,10 +214,14 @@ def train(exercise: str = ACTIVE_EXERCISE):
     _, _, final_preds, final_labels = validate(model, val_loader, criterion, device)
 
     label_names = list(exercise_config["labels"].values())
+    all_class_ids = list(range(num_classes))
     print("\n📋 Classification Report:")
-    print(classification_report(final_labels, final_preds, target_names=label_names))
+    print(classification_report(final_labels, final_preds,
+                                labels=all_class_ids,
+                                target_names=label_names,
+                                zero_division=0))
     print("📊 Confusion Matrix:")
-    print(confusion_matrix(final_labels, final_preds))
+    print(confusion_matrix(final_labels, final_preds, labels=all_class_ids))
 
     print(f"\n✅ Model zapisany: {best_model_path}")
     return model

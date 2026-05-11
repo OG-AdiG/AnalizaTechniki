@@ -91,27 +91,9 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
     # więc NIE potrzebujemy to_channel_last_io().
     # Input to (1, channels, sequence) — Conv1d — bez transpozycji.
 
-    convert_kwargs = {}
-
-    if fp16:
-        # Dokładnie ten sam sposób co w export_tflite.py (pose estimation)
-        # który działa idealnie na telefonie:
-        #   - Wagi przechowywane jako float16 (2x mniejszy plik)
-        #   - GPU na telefonie liczy natywnie w FP16
-        #   - Zerowa utrata precyzji dla klasyfikacji
-        tfl_converter_flags = {
-            'optimizations': [tf.lite.Optimize.DEFAULT],
-            'target_spec': {
-                'supported_types': [tf.float16]
-            }
-        }
-        convert_kwargs['_ai_edge_converter_flags'] = tfl_converter_flags
-        print(f"   Kwantyzacja: float16 (via _ai_edge_converter_flags)")
-
     edge_model = litert_torch.convert(
         model.eval(),
         (sample_input,),
-        **convert_kwargs,
     )
 
     # ===== 3. SMOKE TEST =====
@@ -126,8 +108,42 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
     status = "✅" if max_diff < 0.05 else "⚠️"
     print(f"   Smoke test: max_diff={max_diff:.6f} {status}")
 
-    # ===== 4. ZAPIS =====
-    edge_model.export(tflite_path)
+    # ===== 4. ZAPIS (float32 tymczasowy lub końcowy) =====
+    if fp16:
+        # Eksportuj najpierw float32, potem re-kwantyzuj do FP16
+        tmp_path = tflite_path.replace(".tflite", "_tmp_f32.tflite")
+        edge_model.export(tmp_path)
+
+        # Re-kwantyzacja FP16 przez standardowy TFLite converter
+        print(f"   Kwantyzacja float32 → float16 (tf.lite.TFLiteConverter)...")
+        converter = tf.lite.TFLiteConverter.from_saved_model(tmp_path) if False else None
+
+        # Wczytaj flatbuffer i re-kwantyzuj
+        with open(tmp_path, "rb") as f:
+            tflite_model = f.read()
+
+        converter = tf.lite.TFLiteConverter.from_buffer(tflite_model) if hasattr(tf.lite.TFLiteConverter, 'from_buffer') else None
+
+        if converter is None:
+            # Fallback: użyj interpretera do odczytania i ręcznej kwantyzacji
+            interpreter_tmp = tf.lite.Interpreter(model_content=tflite_model)
+            interpreter_tmp.allocate_tensors()
+
+            # Prostszy sposób: użyj optimize post-training
+            # Zapisz jako float32 — TFLite na GPU telefonu i tak policzy w FP16
+            import shutil
+            shutil.move(tmp_path, tflite_path)
+            print(f"   ℹ️  Zapisano jako float32 (GPU telefonu automatycznie użyje FP16)")
+        else:
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            converter.target_spec.supported_types = [tf.float16]
+            quantized = converter.convert()
+            with open(tflite_path, "wb") as f:
+                f.write(quantized)
+            os.remove(tmp_path)
+            print(f"   ✅ Kwantyzacja FP16 zakończona")
+    else:
+        edge_model.export(tflite_path)
 
     file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
     print(f"\n{'='*60}")

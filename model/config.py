@@ -369,8 +369,40 @@ EXERCISE_CLASSES = {
             5: "banana_back",
         },
         "num_classes": 6,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "nose": 0, "left_ear": 1, "right_ear": 2,
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "hip_hinge": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range_bottom": (60, 100),
+                "correct_range_top": (160, 180),
+                "error_name": "niepełny zakres ruchu (hip hinge)",
+            },
+            "knee_angle": {
+                "joints": ("hip", "knee", "ankle"),
+                "correct_range_bottom": (100, 140),
+                "correct_range_top": (160, 180),
+                "error_name": "zbyt zgięte/proste kolana",
+            },
+            "back_alignment": {
+                "joints": ("sternum", "mid_hip", "knee"),
+                "correct_range": (140, 180),
+                "error_name": "zaokrąglone plecy (banana back)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "hip", "knee"),
+            "up_threshold": 150,
+            "down_threshold": 110,
+        },
     },
 
     # -------------------------------------------------------
@@ -404,8 +436,36 @@ EXERCISE_CLASSES = {
             6: "flared_elbows",
         },
         "num_classes": 7,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_top": (30, 60),
+                "correct_range_bottom": (150, 180),
+                "error_name": "niepełny zakres ruchu (łokieć)",
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range": (160, 180),
+                "error_name": "kipping / kołysanie ciałem",
+            },
+            "elbow_flare": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range": (0, 20),
+                "error_name": "łokcie odchylone od tułowia",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 140,
+            "down_threshold": 80,
+        },
     },
 
     # -------------------------------------------------------
@@ -539,6 +599,7 @@ EXERCISE_CLASSES = {
             4: "hips_forward",
         },
         "num_classes": 5,
+        "exercise_type": "isometric",
         "angle_rules": {},
         "rep_phases": {},
     },
@@ -592,6 +653,7 @@ EXERCISE_CLASSES = {
             6: "shoulders_not_retracted",
         },
         "num_classes": 7,
+        "exercise_type": "isometric",
         "angle_rules": {},
         "rep_phases": {},
     },
@@ -608,10 +670,29 @@ EXERCISE_CLASSES = {
             4: "chest_hidden",
         },
         "num_classes": 5,
+        "exercise_type": "isometric",
         "angle_rules": {},
         "rep_phases": {},
     },
 }
+
+# Zbiór ćwiczeń izometrycznych (czas zamiast powtórzeń)
+ISOMETRIC_EXERCISES = {
+    name for name, cfg in EXERCISE_CLASSES.items()
+    if cfg.get("exercise_type") == "isometric"
+}
+
+# ============================================================
+# PARAMETRY IZOMETRYCZNE (sliding window)
+# ============================================================
+# Okno klasyfikacji dla ćwiczeń izometrycznych (w klatkach)
+# 30 klatek = 1s przy 30 FPS — klasyfikacja co 1 sekundę
+ISOMETRIC_WINDOW_SIZE = SEQUENCE_LENGTH  # 30 klatek = 1s
+# Przesunięcie okna (w klatkach) — co ile klatek nowa klasyfikacja
+# 15 klatek = 0.5s → okno przesuwa się co pół sekundy (50% overlap)
+ISOMETRIC_WINDOW_STRIDE = 15
+# Minimalny confidence żeby uznać klasyfikację za pewną
+ISOMETRIC_MIN_CONFIDENCE = 0.4
 
 # Aktywne ćwiczenie (domyślnie)
 ACTIVE_EXERCISE = "pushup"
