@@ -74,11 +74,21 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
       → float16 kwantyzacja       (opcjonalnie, 2x mniejszy)
       → .export()                 (zapis .tflite)
     """
-    import litert_torch
+    # Działa zarówno ze starszą wersją (ai-edge-torch <= 0.7.x) jak i
+    # z nowszą (litert-torch >= 0.8.x). Google w styczniu 2026 zmienił
+    # nazwę pakietu z `ai_edge_torch` na `litert_torch`, więc trzymamy
+    # oba importy jako fallback.
+    try:
+        import litert_torch
+        _converter_name = "litert-torch"
+    except ImportError:
+        import ai_edge_torch as litert_torch  # type: ignore
+        _converter_name = "ai-edge-torch (legacy)"
+
     import tensorflow as tf
 
     precision = "float16" if fp16 else "float32"
-    print(f"🔄 Konwersja PyTorch → TFLite (litert-torch, {precision})...")
+    print(f"🔄 Konwersja PyTorch → TFLite ({_converter_name}, {precision})...")
 
     # ===== 1. WALIDACJA PYTORCH =====
     sample_input = torch.randn(1, input_channels, sequence_length)
@@ -108,11 +118,32 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
         convert_kwargs['_ai_edge_converter_flags'] = tfl_converter_flags
         print(f"   Kwantyzacja: float16 (via _ai_edge_converter_flags)")
 
-    edge_model = litert_torch.convert(
-        model.eval(),
-        (sample_input,),
-        **convert_kwargs,
-    )
+    try:
+        edge_model = litert_torch.convert(
+            model.eval(),
+            (sample_input,),
+            **convert_kwargs,
+        )
+    except TypeError as e:
+        # litert-torch >= 0.9.0 wywaliło prywatny kwarg _ai_edge_converter_flags.
+        # Spróbujmy bez niego — model wyjdzie FP32, ale przynajmniej eksport
+        # nie skraszuje. Użytkownik dostanie wyraźne ostrzeżenie.
+        if fp16 and "_ai_edge_converter_flags" in str(e):
+            print("   ⚠️ Twoja wersja litert-torch nie wspiera już prywatnego")
+            print("      kwarga _ai_edge_converter_flags (zmiana API w 0.9.0).")
+            print("      Eksportuję BEZ kwantyzacji — model wyjdzie jako FP32.")
+            print("      Aby dostać FP16, użyj:")
+            print("        pip install \"ai-edge-torch==0.7.0\" \"tensorflow==2.18.0\"")
+            print("      lub przejdź na ścieżkę ONNX (osobny tryb).")
+            convert_kwargs.pop('_ai_edge_converter_flags', None)
+            edge_model = litert_torch.convert(
+                model.eval(),
+                (sample_input,),
+                **convert_kwargs,
+            )
+            precision = "float32 (fallback, brak FP16 support)"
+        else:
+            raise
 
     # ===== 3. SMOKE TEST =====
     edge_output = edge_model(sample_input)
@@ -213,6 +244,91 @@ def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
     print(f"    Mean: {avg:.1f}ms | P50: {p50:.1f}ms | P95: {p95:.1f}ms")
 
 
+def convert_via_onnx(model: TemporalCNN, tflite_path: str,
+                     input_channels: int = INPUT_CHANNELS,
+                     sequence_length: int = SEQUENCE_LENGTH,
+                     fp16: bool = False):
+    """
+    Alternatywna ścieżka eksportu: PyTorch → ONNX → onnx2tf → TFLite.
+
+    Używana gdy litert-torch jest popsuty (np. nowe API bez fp16 support).
+    Dla naszego TCN (Conv1d, BatchNorm1d, Linear, AdaptiveAvgPool1d)
+    pipeline jest stabilny — to wszystko standardowe ops bez problemów
+    NCHW↔NHWC.
+    """
+    import tempfile
+    import shutil
+
+    try:
+        import onnx
+        import onnx2tf
+    except ImportError as e:
+        raise ImportError(
+            "Ścieżka ONNX wymaga: pip install onnx onnx2tf tensorflow"
+        ) from e
+
+    precision = "float16" if fp16 else "float32"
+    print(f"🔄 Konwersja PyTorch → ONNX → TFLite (onnx2tf, {precision})...")
+
+    sample_input = torch.randn(1, input_channels, sequence_length)
+    with torch.no_grad():
+        pytorch_output = model.eval()(sample_input)
+    print(f"   PyTorch output shape: {pytorch_output.shape}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        onnx_path = os.path.join(tmpdir, "model.onnx")
+
+        torch.onnx.export(
+            model.eval(),
+            sample_input,
+            onnx_path,
+            input_names=["input"],
+            output_names=["logits"],
+            opset_version=17,
+            do_constant_folding=True,
+            dynamic_axes={
+                "input": {0: "batch"},
+                "logits": {0: "batch"},
+            },
+        )
+        onnx.checker.check_model(onnx_path)
+        print(f"   ✅ ONNX zapisany: {os.path.getsize(onnx_path)/1024:.0f} KB")
+
+        out_dir = os.path.join(tmpdir, "tf_out")
+        os.makedirs(out_dir, exist_ok=True)
+
+        onnx2tf.convert(
+            input_onnx_file_path=onnx_path,
+            output_folder_path=out_dir,
+            output_signaturedefs=True,
+            non_verbose=True,
+            output_h5=False,
+            output_keras_v3=False,
+            copy_onnx_input_output_names_to_tflite=True,
+        )
+
+        suffix = "float16" if fp16 else "float32"
+        candidate = os.path.join(out_dir, f"model_{suffix}.tflite")
+        if not os.path.exists(candidate):
+            tflite_files = [f for f in os.listdir(out_dir) if f.endswith(".tflite")]
+            if not tflite_files:
+                raise RuntimeError(f"onnx2tf nie wygenerował żadnego .tflite w {out_dir}")
+            preferred = [f for f in tflite_files if suffix in f] or tflite_files
+            candidate = os.path.join(out_dir, preferred[0])
+
+        shutil.copy2(candidate, tflite_path)
+        print(f"   ✅ Wybrano: {os.path.basename(candidate)}")
+
+    file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
+    print(f"\n{'='*60}")
+    print(f"  SUKCES! Model TFLite gotowy: {tflite_path}")
+    print(f"  Rozmiar:      {file_size_mb:.2f} MB ({precision})")
+    print(f"  Wejście:      [1, {input_channels}, {sequence_length}]")
+    print(f"  Wyjście:      [1, num_classes]")
+    print(f"  Pipeline:     PyTorch → ONNX → onnx2tf → TFLite")
+    print(f"{'='*60}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Eksport modelu PyTorch → TFLite (LiteRT)")
     parser.add_argument("--exercise", type=str, default=ACTIVE_EXERCISE,
@@ -222,6 +338,10 @@ def main():
                         help="Eksportuj w float16 (~50%% mniejszy model)")
     parser.add_argument("--test", action="store_true",
                         help="Weryfikuj wyniki TFLite vs PyTorch + benchmark")
+    parser.add_argument("--backend", type=str, default="litert",
+                        choices=["litert", "onnx"],
+                        help="Backend konwersji: litert (litert-torch / ai-edge-torch) "
+                             "lub onnx (PyTorch → ONNX → onnx2tf, fallback)")
     args = parser.parse_args()
 
     if args.checkpoint is None:
@@ -236,7 +356,10 @@ def main():
     input_ch = ckpt.get("input_channels", INPUT_CHANNELS)
     seq_len = ckpt.get("sequence_length", SEQUENCE_LENGTH)
 
-    convert_to_tflite(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
+    if args.backend == "onnx":
+        convert_via_onnx(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
+    else:
+        convert_to_tflite(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
 
     if args.test:
         verify_tflite(tflite_path, model)
