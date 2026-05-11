@@ -594,14 +594,46 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "bent_legs",
-            3: "head_in_shoulders",
-            4: "hips_forward",
+            2: "no_retraction",
+            3: "legs_low",
+            4: "bent_legs",
         },
         "num_classes": 5,
         "exercise_type": "isometric",
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "nose": 0, "left_ear": 1, "right_ear": 2,
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "left_big_toe": 15,  "right_big_toe": 16,
+            "left_heel": 17,     "right_heel": 18,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "hip_angle": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range": (70, 100),
+                "error_name": "nogi poniżej 90° (legs_low)",
+            },
+            "knee_angle": {
+                "joints": ("hip", "knee", "ankle"),
+                "correct_range": (160, 180),
+                "error_name": "zgięte nogi (bent_legs)",
+            },
+            "shoulder_retraction": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range": (70, 120),
+                "error_name": "nie spięte barki (no_retraction)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "hip", "knee"),
+            "up_threshold": 90,
+            "down_threshold": 80,
+        },
     },
 
     # -------------------------------------------------------
