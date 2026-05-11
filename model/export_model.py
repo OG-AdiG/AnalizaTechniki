@@ -308,11 +308,15 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
         saved_model_dir = os.path.join(tmpdir, "tf_out")
         os.makedirs(saved_model_dir, exist_ok=True)
 
-        # onnx2tf z output_signaturedefs=True wypluwa SavedModel obok
-        # gotowych .tflite. Bierzemy SavedModel — własną kwantyzację
-        # robimy przez TFLiteConverter, żeby dostać weight-only FP16
-        # zamiast full-FP16.
-        onnx2tf.convert(
+        # onnx2tf wypluwa SavedModel obok gotowych .tflite. Bierzemy
+        # SavedModel — własną kwantyzację robimy przez TFLiteConverter,
+        # żeby dostać weight-only FP16 zamiast full-FP16.
+        #
+        # UWAGA: od onnx2tf 2.4.0 domyślny tryb to `flatbuffer_direct`,
+        # który POMIJA SavedModel (wypluwa od razu .tflite). Trzeba
+        # jawnie poprosić o SavedModel przez `flatbuffer_direct_output_saved_model`.
+        # Flag nie istnieje w 2.3.x, więc dodajemy go warunkowo.
+        convert_kwargs = dict(
             input_onnx_file_path=onnx_path,
             output_folder_path=saved_model_dir,
             output_signaturedefs=True,
@@ -321,6 +325,35 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
             output_keras_v3=False,
             copy_onnx_input_output_names_to_tflite=True,
         )
+
+        import inspect
+        try:
+            from onnx2tf import onnx2tf as _o2t_mod
+            for fn_name in dir(_o2t_mod):
+                fn = getattr(_o2t_mod, fn_name)
+                if not callable(fn) or "convert" not in fn_name.lower():
+                    continue
+                try:
+                    if "flatbuffer_direct_output_saved_model" in inspect.signature(fn).parameters:
+                        convert_kwargs["flatbuffer_direct_output_saved_model"] = True
+                        break
+                except (TypeError, ValueError):
+                    pass
+        except Exception:
+            pass
+
+        onnx2tf.convert(**convert_kwargs)
+
+        if not any(
+            os.path.exists(os.path.join(saved_model_dir, fname))
+            for fname in ("saved_model.pb", "saved_model.pbtxt")
+        ):
+            raise RuntimeError(
+                f"onnx2tf nie zapisał SavedModel w {saved_model_dir}. "
+                f"Pin starszą wersję: pip install 'onnx2tf<2.4', albo "
+                f"upewnij się że flag `flatbuffer_direct_output_saved_model` "
+                f"jest dostępny w twoim onnx2tf."
+            )
         print(f"   ✅ SavedModel: {saved_model_dir}")
 
         converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
