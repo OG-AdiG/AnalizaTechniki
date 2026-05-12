@@ -66,13 +66,10 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
                       sequence_length: int = SEQUENCE_LENGTH,
                       fp16: bool = False):
     """
-    Eksport PyTorch → TFLite przy użyciu litert-torch.
+    Eksport PyTorch → TFLite przez litert-torch (bezpośrednio, bez ONNX).
 
-    Pipeline:
-      PyTorch model (eval)
-      → litert_torch.convert()    (torch.export → TFLite)
-      → float16 kwantyzacja       (opcjonalnie, 2x mniejszy)
-      → .export()                 (zapis .tflite)
+    FP16: litert_torch.convert() + _ai_edge_converter_flags
+    FP32: litert_torch.convert()
     """
     import litert_torch
     import tensorflow as tf
@@ -85,15 +82,28 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
     with torch.no_grad():
         pytorch_output = model(sample_input)
     print(f"   PyTorch output shape: {pytorch_output.shape}")
+    ref_np = pytorch_output.detach().numpy()
 
     # ===== 2. KONWERSJA → TFLITE =====
-    # TCN nie ma konwolucji 2D (brak NCHW/NHWC),
-    # więc NIE potrzebujemy to_channel_last_io().
-    # Input to (1, channels, sequence) — Conv1d — bez transpozycji.
+    # UWAGA: litert-torch >= 0.9.0 usunęło _ai_edge_converter_flags.
+    # Dla FP16 wymagana jest wersja < 0.9.0:
+    #   pip install "litert-torch<0.9.0"
+    convert_kwargs = {}
+
+    if fp16:
+        tfl_converter_flags = {
+            'optimizations': [tf.lite.Optimize.DEFAULT],
+            'target_spec': {
+                'supported_types': [tf.float16]
+            }
+        }
+        convert_kwargs['_ai_edge_converter_flags'] = tfl_converter_flags
+        print(f"   Kwantyzacja: float16 (via _ai_edge_converter_flags)")
 
     edge_model = litert_torch.convert(
         model.eval(),
         (sample_input,),
+        **convert_kwargs,
     )
 
     # ===== 3. SMOKE TEST =====
@@ -103,47 +113,12 @@ def convert_to_tflite(model: TemporalCNN, tflite_path: str,
     else:
         edge_np = edge_output if isinstance(edge_output, np.ndarray) else edge_output.detach().numpy()
 
-    ref_np = pytorch_output.detach().numpy()
     max_diff = np.max(np.abs(ref_np - edge_np))
     status = "✅" if max_diff < 0.05 else "⚠️"
     print(f"   Smoke test: max_diff={max_diff:.6f} {status}")
 
-    # ===== 4. ZAPIS (float32 tymczasowy lub końcowy) =====
-    if fp16:
-        # Eksportuj najpierw float32, potem re-kwantyzuj do FP16
-        tmp_path = tflite_path.replace(".tflite", "_tmp_f32.tflite")
-        edge_model.export(tmp_path)
-
-        # Re-kwantyzacja FP16 przez standardowy TFLite converter
-        print(f"   Kwantyzacja float32 → float16 (tf.lite.TFLiteConverter)...")
-        converter = tf.lite.TFLiteConverter.from_saved_model(tmp_path) if False else None
-
-        # Wczytaj flatbuffer i re-kwantyzuj
-        with open(tmp_path, "rb") as f:
-            tflite_model = f.read()
-
-        converter = tf.lite.TFLiteConverter.from_buffer(tflite_model) if hasattr(tf.lite.TFLiteConverter, 'from_buffer') else None
-
-        if converter is None:
-            # Fallback: użyj interpretera do odczytania i ręcznej kwantyzacji
-            interpreter_tmp = tf.lite.Interpreter(model_content=tflite_model)
-            interpreter_tmp.allocate_tensors()
-
-            # Prostszy sposób: użyj optimize post-training
-            # Zapisz jako float32 — TFLite na GPU telefonu i tak policzy w FP16
-            import shutil
-            shutil.move(tmp_path, tflite_path)
-            print(f"   ℹ️  Zapisano jako float32 (GPU telefonu automatycznie użyje FP16)")
-        else:
-            converter.optimizations = [tf.lite.Optimize.DEFAULT]
-            converter.target_spec.supported_types = [tf.float16]
-            quantized = converter.convert()
-            with open(tflite_path, "wb") as f:
-                f.write(quantized)
-            os.remove(tmp_path)
-            print(f"   ✅ Kwantyzacja FP16 zakończona")
-    else:
-        edge_model.export(tflite_path)
+    # ===== 4. ZAPIS =====
+    edge_model.export(tflite_path)
 
     file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
     print(f"\n{'='*60}")
