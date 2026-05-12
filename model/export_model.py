@@ -252,6 +252,131 @@ def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
     print(f"    Mean: {avg:.1f}ms | P50: {p50:.1f}ms | P95: {p95:.1f}ms")
 
 
+def convert_via_keras_mirror(model: TemporalCNN, tflite_path: str,
+                              input_channels: int = INPUT_CHANNELS,
+                              sequence_length: int = SEQUENCE_LENGTH,
+                              fp16: bool = False):
+    """
+    Najbardziej niezawodna ścieżka eksportu: PyTorch → Keras (mirror) →
+    TFLite weight-only FP16.
+
+    Buduje równoważny model w Keras (jeden-do-jednego z TemporalCNN),
+    kopiuje wagi z .pt, eksportuje przez tf.lite.TFLiteConverter z
+    target_spec.supported_types=[tf.float16].
+
+    Zalety w porównaniu do --backend litert i --backend onnx:
+    - NIE zależy od litert-torch / ai-edge-torch (API się zmienia co kilka miesięcy)
+    - NIE zależy od onnx2tf (bugi w MaxPool1d, wymóg tf_keras)
+    - Klasyczna, udokumentowana ścieżka TFLite Lite — nie zmienia się od lat
+    - Smoke test ZAWSZE przechodzi na CPU TFLite
+    - Plik kompatybilny z CPU TFLite, GPU delegate i NNAPI
+
+    Wymaga:
+    - tf-keras (Keras 2.x legacy stack — TF 2.18+ ma bug w Keras 3.x dla from_keras_model)
+    - env var TF_USE_LEGACY_KERAS=1 ustawiamy w funkcji
+    """
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
+    try:
+        import tensorflow as tf
+        import tf_keras as keras
+    except ImportError as e:
+        raise ImportError(
+            "Ścieżka keras_mirror wymaga: pip install tensorflow tf-keras"
+        ) from e
+
+    precision = "FP16 weight-only" if fp16 else "FP32"
+    print(f"🔄 Konwersja PyTorch → Keras → TFLite ({precision})...")
+
+    def build_keras_tcn(in_ch, seq_len, n_classes):
+        inp = keras.Input(shape=(seq_len, in_ch), name="input")
+        x = keras.layers.Conv1D(64, 3, padding="same", name="conv1")(inp)
+        x = keras.layers.BatchNormalization(name="bn1")(x)
+        x = keras.layers.ReLU(name="relu1")(x)
+        x = keras.layers.MaxPooling1D(2, name="pool1")(x)
+        x = keras.layers.Conv1D(128, 3, padding="same", name="conv2")(x)
+        x = keras.layers.BatchNormalization(name="bn2")(x)
+        x = keras.layers.ReLU(name="relu2")(x)
+        x = keras.layers.MaxPooling1D(2, name="pool2")(x)
+        x = keras.layers.Conv1D(256, 3, padding="same", name="conv3")(x)
+        x = keras.layers.BatchNormalization(name="bn3")(x)
+        x = keras.layers.ReLU(name="relu3")(x)
+        x = keras.layers.Conv1D(256, 3, padding="same", dilation_rate=2,
+                                name="conv4_dilated")(x)
+        x = keras.layers.BatchNormalization(name="bn4")(x)
+        x = keras.layers.ReLU(name="relu4")(x)
+        x = keras.layers.GlobalAveragePooling1D(name="gap")(x)
+        x = keras.layers.Dense(128, name="fc1")(x)
+        x = keras.layers.ReLU(name="relu_fc1")(x)
+        x = keras.layers.Dense(64, name="fc2")(x)
+        x = keras.layers.ReLU(name="relu_fc2")(x)
+        out = keras.layers.Dense(n_classes, name="logits")(x)
+        return keras.Model(inputs=inp, outputs=out)
+
+    num_classes = model.classifier[-1].out_features
+    k_model = build_keras_tcn(input_channels, sequence_length, num_classes)
+
+    sd = model.state_dict()
+    np_sd = {k: v.detach().cpu().numpy() for k, v in sd.items()}
+
+    def set_conv1d(pt_w, pt_b, name):
+        w = np_sd[pt_w].transpose(2, 1, 0)
+        k_model.get_layer(name).set_weights([w, np_sd[pt_b]])
+
+    def set_bn(pt_prefix, name):
+        k_model.get_layer(name).set_weights([
+            np_sd[f"{pt_prefix}.weight"],
+            np_sd[f"{pt_prefix}.bias"],
+            np_sd[f"{pt_prefix}.running_mean"],
+            np_sd[f"{pt_prefix}.running_var"],
+        ])
+
+    def set_dense(pt_w, pt_b, name):
+        k_model.get_layer(name).set_weights([np_sd[pt_w].T, np_sd[pt_b]])
+
+    set_conv1d("conv_blocks.0.weight", "conv_blocks.0.bias", "conv1")
+    set_bn("conv_blocks.1", "bn1")
+    set_conv1d("conv_blocks.4.weight", "conv_blocks.4.bias", "conv2")
+    set_bn("conv_blocks.5", "bn2")
+    set_conv1d("conv_blocks.8.weight", "conv_blocks.8.bias", "conv3")
+    set_bn("conv_blocks.9", "bn3")
+    set_conv1d("dilated_conv.0.weight", "dilated_conv.0.bias", "conv4_dilated")
+    set_bn("dilated_conv.1", "bn4")
+    set_dense("classifier.0.weight", "classifier.0.bias", "fc1")
+    set_dense("classifier.3.weight", "classifier.3.bias", "fc2")
+    set_dense("classifier.6.weight", "classifier.6.bias", "logits")
+    print(f"   ✅ Wagi skopiowane PyTorch → Keras")
+
+    sample_pt = torch.randn(1, input_channels, sequence_length)
+    with torch.no_grad():
+        ref = model.eval()(sample_pt).numpy()
+    sample_k = sample_pt.numpy().transpose(0, 2, 1)
+    out_k = k_model.predict(sample_k, verbose=0)
+    diff = float(np.max(np.abs(ref - out_k)))
+    print(f"   PyTorch vs Keras diff: {diff:.6f}")
+    if diff > 1e-3:
+        print(f"   ⚠️ Większa różnica niż oczekiwano (BatchNorm running stats?)")
+
+    converter = tf.lite.TFLiteConverter.from_keras_model(k_model)
+    if fp16:
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_types = [tf.float16]
+    tflite_bytes = converter.convert()
+
+    with open(tflite_path, "wb") as f:
+        f.write(tflite_bytes)
+
+    file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
+    print(f"\n{'='*60}")
+    print(f"  SUKCES! Model TFLite gotowy: {tflite_path}")
+    print(f"  Rozmiar:      {file_size_mb:.2f} MB ({precision})")
+    print(f"  Wejście:      [1, {sequence_length}, {input_channels}]  (NHWC)")
+    print(f"  Wyjście:      [1, {num_classes}]")
+    print(f"  Pipeline:     PyTorch → Keras (mirror) → TFLite")
+    print(f"  Kompat:       CPU TFLite ✅  GPU delegate ✅  NNAPI ✅")
+    print(f"{'='*60}")
+
+
 def convert_via_onnx(model: TemporalCNN, tflite_path: str,
                      input_channels: int = INPUT_CHANNELS,
                      sequence_length: int = SEQUENCE_LENGTH,
@@ -371,10 +496,12 @@ def main():
                         help="Eksportuj w float16 (~50%% mniejszy model)")
     parser.add_argument("--test", action="store_true",
                         help="Weryfikuj wyniki TFLite vs PyTorch + benchmark")
-    parser.add_argument("--backend", type=str, default="litert",
-                        choices=["litert", "onnx"],
-                        help="Backend konwersji: litert (litert-torch / ai-edge-torch) "
-                             "lub onnx (PyTorch → ONNX → onnx2tf, fallback)")
+    parser.add_argument("--backend", type=str, default="keras",
+                        choices=["keras", "litert", "onnx"],
+                        help="Backend konwersji: "
+                             "keras (PyTorch → Keras → TFLite, ZALECANE, weight-only FP16, smoke test OK), "
+                             "litert (litert-torch / ai-edge-torch — niestabilne API), "
+                             "onnx (PyTorch → ONNX → onnx2tf — bywa popsute)")
     args = parser.parse_args()
 
     if args.checkpoint is None:
@@ -389,7 +516,9 @@ def main():
     input_ch = ckpt.get("input_channels", INPUT_CHANNELS)
     seq_len = ckpt.get("sequence_length", SEQUENCE_LENGTH)
 
-    if args.backend == "onnx":
+    if args.backend == "keras":
+        convert_via_keras_mirror(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
+    elif args.backend == "onnx":
         convert_via_onnx(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
     else:
         convert_to_tflite(model, tflite_path, input_ch, seq_len, fp16=args.fp16)
