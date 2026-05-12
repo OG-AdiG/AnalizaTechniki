@@ -307,21 +307,26 @@ def convert_via_keras_mirror(model: TemporalCNN, tflite_path: str,
     print(f"🔄 Konwersja PyTorch → Keras → TFLite ({precision})...")
 
     def build_keras_tcn(in_ch, seq_len, n_classes):
+        # KLUCZ: epsilon=1e-5 dla wszystkich BN. PyTorch BatchNorm1d default
+        # to eps=1e-5, Keras BatchNormalization default to epsilon=1e-3
+        # (100× większy). Bez tego inferencja Keras rozjeżdża się o ~1e-2
+        # vs PyTorch — na 4 warstwach BN robi się to widoczne.
+        BN_EPS = 1e-5
         inp = keras.Input(shape=(seq_len, in_ch), name="input")
         x = keras.layers.Conv1D(64, 3, padding="same", name="conv1")(inp)
-        x = keras.layers.BatchNormalization(name="bn1")(x)
+        x = keras.layers.BatchNormalization(epsilon=BN_EPS, name="bn1")(x)
         x = keras.layers.ReLU(name="relu1")(x)
         x = keras.layers.MaxPooling1D(2, name="pool1")(x)
         x = keras.layers.Conv1D(128, 3, padding="same", name="conv2")(x)
-        x = keras.layers.BatchNormalization(name="bn2")(x)
+        x = keras.layers.BatchNormalization(epsilon=BN_EPS, name="bn2")(x)
         x = keras.layers.ReLU(name="relu2")(x)
         x = keras.layers.MaxPooling1D(2, name="pool2")(x)
         x = keras.layers.Conv1D(256, 3, padding="same", name="conv3")(x)
-        x = keras.layers.BatchNormalization(name="bn3")(x)
+        x = keras.layers.BatchNormalization(epsilon=BN_EPS, name="bn3")(x)
         x = keras.layers.ReLU(name="relu3")(x)
         x = keras.layers.Conv1D(256, 3, padding="same", dilation_rate=2,
                                 name="conv4_dilated")(x)
-        x = keras.layers.BatchNormalization(name="bn4")(x)
+        x = keras.layers.BatchNormalization(epsilon=BN_EPS, name="bn4")(x)
         x = keras.layers.ReLU(name="relu4")(x)
         x = keras.layers.GlobalAveragePooling1D(name="gap")(x)
         x = keras.layers.Dense(128, name="fc1")(x)
