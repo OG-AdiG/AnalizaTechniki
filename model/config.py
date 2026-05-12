@@ -143,6 +143,17 @@ MIN_REP_FRAMES = 10  # 10 klatek @ 30 FPS ≈ 0.34s min między repami
 MAX_REPS_PER_MINUTE = {
     "pushup": 40,
     "pullup": 25,
+    "dips": 35,
+    "bench_press": 25,
+    "deadlift": 20,
+    "bicep_curl": 35,
+    "lateral_raise": 35,
+    "ohp": 25,
+    "bent_over_row": 30,
+    "french_press": 30,
+    "chest_fly": 25,
+    "hip_thrust": 30,
+    "v_sit": 30,
 }
 
 # Domyślny sufit jeśli ćwiczenie nie ma zdefiniowanego
@@ -170,7 +181,18 @@ PARTIAL_REP_MIN_AMPLITUDE = 20.0
 REVERSAL_DEADBAND = 0.5
 
 # ============================================================
-# DEFINICJE ĆWICZEŃ — 20 ćwiczeń, każde z klasą "setup"
+# DEFINICJE ĆWICZEŃ
+# ============================================================
+# Aktywnie trenowane (14 ćwiczeń z listy SEE):
+#   pullup, dips, pushup, bench_press, deadlift, bicep_curl,
+#   lateral_raise, ohp, bent_over_row, french_press, chest_fly,
+#   l_sit, hip_thrust, v_sit
+# Zaplanowane (struktura bez labeli/angle_rules):
+#   leg_raise, squat, muscle_up, lunge, plank, hollow_body
+#
+# Każde ćwiczenie ma klasę 0 = "setup" (pozycja przygotowawcza,
+# między-rep przerwa). Klasyfikator filtruje setup zanim policzy
+# powtórzenie — patrz model/rep_classifier.py.
 # ============================================================
 EXERCISE_CLASSES = {
     # -------------------------------------------------------
@@ -184,7 +206,7 @@ EXERCISE_CLASSES = {
             3: "half_rep_top",
             4: "half_rep_bottom",
             5: "chicken_neck",
-            6: "asymmetric_pull",
+            6: "asymmetric",
         },
         "num_classes": 7,
         "key_landmarks": {
@@ -233,12 +255,12 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "banana_back",
+            2: "arching_back",
             3: "flared_elbows",
             4: "half_rep_bottom",
             5: "half_rep_top",
             6: "kipping",
-            7: "no_retraction",
+            7: "shoulders_not_retracted",
         },
         "num_classes": 8,
         "key_landmarks": {
@@ -346,14 +368,49 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "butt_off_bench",
-            3: "no_arch",
-            4: "wide_elbows",
-            5: "one_arm_pushes_more",
+            2: "asymmetric",
+            3: "flared_elbows",
+            4: "no_arch",
+            5: "raised_hips",
         },
         "num_classes": 6,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_bottom": (70, 100),
+                "correct_range_top": (160, 180),
+                "error_name": "niepełny zakres ruchu (łokieć)",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (30, 75),
+                "error_name": "flared elbows (łokcie zbyt szeroko)",
+            },
+            "back_arch": {
+                "joints": ("shoulder", "mid_hip", "knee"),
+                "correct_range": (155, 180),
+                "error_name": "brak mostkowania (no_arch)",
+            },
+            "hip_contact": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range": (140, 180),
+                "error_name": "uniesione biodra (raised_hips)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 155,
+            "down_threshold": 105,
+        },
     },
 
     # -------------------------------------------------------
@@ -363,10 +420,10 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "asymmetric_pull",
+            2: "asymmetric",
             3: "shoulders_not_retracted",
             4: "hips_same_as_knees",
-            5: "banana_back",
+            5: "arching_back",
         },
         "num_classes": 6,
         "key_landmarks": {
@@ -431,8 +488,8 @@ EXERCISE_CLASSES = {
             1: "correct",
             2: "half_rep_top",
             3: "half_rep_bottom",
-            4: "asymmetric_pull",
-            5: "kipping",
+            4: "asymmetric",
+            5: "swinging",
             6: "flared_elbows",
         },
         "num_classes": 7,
@@ -469,73 +526,186 @@ EXERCISE_CLASSES = {
     },
 
     # -------------------------------------------------------
-    # 9. SCYZORYKI (V-UP)
+    # 9. SCYZORYKI (V-SIT)
     # -------------------------------------------------------
-    "v_up": {
+    "v_sit": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "legs_on_ground",
-            3: "loose_core",
-            4: "half_rep",
+            2: "arching_back",
+            3: "dropping_legs",
+            4: "half_rep_top",
+            5: "half_rep_bottom",
         },
-        "num_classes": 5,
-        "angle_rules": {},
-        "rep_phases": {},
+        "num_classes": 6,
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "hip_angle": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range_bottom": (60, 100),
+                "correct_range_top": (160, 180),
+                "error_name": "niepełny zakres ruchu (V-sit)",
+            },
+            "knee_angle": {
+                "joints": ("hip", "knee", "ankle"),
+                "correct_range": (155, 180),
+                "error_name": "zgięte nogi",
+            },
+            "back_alignment": {
+                "joints": ("sternum", "mid_hip", "knee"),
+                "correct_range": (150, 180),
+                "error_name": "wygięte plecy (arching_back)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "hip", "knee"),
+            "up_threshold": 150,
+            "down_threshold": 95,
+        },
     },
 
     # -------------------------------------------------------
     # 10. UNOSZENIE HANTLI (LATERAL RAISE)
     # -------------------------------------------------------
+    # UWAGA: użytkownik nie wymienił "setup" w swojej liście, ale klasa
+    # setup jest niezbędna w przepływie (rep_classifier filtruje setup
+    # zanim policzy powtórzenie). Dodano klasę 0 = setup automatycznie.
     "lateral_raise": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "half_rep_top",
+            2: "bent_arms",
             3: "half_rep_bottom",
             4: "straight_arms",
-            5: "too_bent_arms",
-            6: "shoulders_not_retracted",
         },
-        "num_classes": 7,
-        "angle_rules": {},
-        "rep_phases": {},
+        "num_classes": 5,
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "shoulder_abduction": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_top": (75, 100),
+                "correct_range_bottom": (5, 25),
+                "error_name": "niepełny zakres ruchu (lateral raise)",
+            },
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range": (150, 175),
+                "error_name": "zbyt zgięte/proste ręce",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("hip", "shoulder", "elbow"),
+            "up_threshold": 75,
+            "down_threshold": 25,
+        },
     },
 
     # -------------------------------------------------------
     # 11. OHP (OVERHEAD PRESS)
     # -------------------------------------------------------
+    # UWAGA: użytkownik nie wymienił "setup" w swojej liście, ale klasa
+    # setup jest niezbędna w przepływie. Dodano klasę 0 = setup automatycznie.
     "ohp": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "shoulders_not_retracted",
-            3: "half_rep_top",
-            4: "half_rep_bottom",
-            5: "one_arm_pushes_more",
-            6: "banana_back",
+            2: "arching_back",
+            3: "asymmetric",
+            4: "flared_elbows",
+            5: "half_rep_top",
+            6: "half_rep_bottom",
         },
         "num_classes": 7,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_bottom": (60, 100),
+                "correct_range_top": (160, 180),
+                "error_name": "niepełny zakres ruchu (łokieć)",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (40, 70),
+                "error_name": "flared elbows (łokcie zbyt szeroko)",
+            },
+            "back_alignment": {
+                "joints": ("shoulder", "mid_hip", "knee"),
+                "correct_range": (165, 180),
+                "error_name": "wygięte plecy (arching_back)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 160,
+            "down_threshold": 95,
+        },
     },
 
     # -------------------------------------------------------
-    # 12. WIOSŁOWANIE (ROW)
+    # 12. WIOSŁOWANIE W OPADZIE (BENT OVER ROW)
     # -------------------------------------------------------
-    "row": {
+    "bent_over_row": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "pulling_with_arms",
-            3: "half_rep_top",
+            2: "asymmetric",
+            3: "flared_elbows",
             4: "half_rep_bottom",
-            5: "swinging",
-            6: "asymmetric_pull",
+            5: "half_rep_top",
+            6: "swinging",
         },
         "num_classes": 7,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_top": (60, 100),
+                "correct_range_bottom": (150, 180),
+                "error_name": "niepełny zakres ruchu (łokieć)",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range": (15, 60),
+                "error_name": "flared elbows (łokcie zbyt szeroko)",
+            },
+            "body_alignment": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range": (80, 130),
+                "error_name": "kołysanie ciałem (swinging)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 145,
+            "down_threshold": 85,
+        },
     },
 
     # -------------------------------------------------------
@@ -545,30 +715,83 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "shoulders_elbows_aligned",
-            3: "half_rep_top",
-            4: "half_rep_bottom",
+            2: "arms_in_same_line_as_shoulders",
+            3: "asymmetric",
+            4: "flared_elbows",
+            5: "half_rep_bottom",
+            6: "half_rep_top",
         },
-        "num_classes": 5,
-        "angle_rules": {},
-        "rep_phases": {},
+        "num_classes": 7,
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range_top": (160, 180),
+                "correct_range_bottom": (40, 70),
+                "error_name": "niepełny zakres ruchu (łokieć)",
+            },
+            "shoulder_angle": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range": (155, 180),
+                "error_name": "ramię w lini z barkami (arms_in_same_line_as_shoulders)",
+            },
+            "elbow_flare": {
+                "joints": ("sternum", "shoulder", "elbow"),
+                "correct_range": (15, 40),
+                "error_name": "flared elbows (łokcie zbyt szeroko)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "elbow", "wrist"),
+            "up_threshold": 155,
+            "down_threshold": 75,
+        },
     },
 
     # -------------------------------------------------------
-    # 14. ROZPIĘTKI (FLY)
+    # 14. ROZPIĘTKI NA KLATĘ (CHEST FLY)
     # -------------------------------------------------------
-    "fly": {
+    "chest_fly": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "straight_arms",
-            3: "bent_arms",
+            2: "bent_arms",
+            3: "half_rep_bottom",
             4: "half_rep_top",
-            5: "half_rep_bottom",
+            5: "straight_arms",
         },
         "num_classes": 6,
-        "angle_rules": {},
-        "rep_phases": {},
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_elbow": 5,     "right_elbow": 6,
+            "left_wrist": 7,     "right_wrist": 8,
+            "left_hip": 9,       "right_hip": 10,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "shoulder_abduction": {
+                "joints": ("hip", "shoulder", "elbow"),
+                "correct_range_bottom": (15, 40),
+                "correct_range_top": (70, 100),
+                "error_name": "niepełny zakres ruchu (rozpiętki)",
+            },
+            "elbow_angle": {
+                "joints": ("shoulder", "elbow", "wrist"),
+                "correct_range": (145, 170),
+                "error_name": "zbyt zgięte/proste ręce",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("hip", "shoulder", "elbow"),
+            "up_threshold": 75,
+            "down_threshold": 30,
+        },
     },
 
     # -------------------------------------------------------
@@ -594,7 +817,7 @@ EXERCISE_CLASSES = {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "no_retraction",
+            2: "shoulders_not_retracted",
             3: "legs_low",
             4: "bent_legs",
         },
@@ -626,7 +849,7 @@ EXERCISE_CLASSES = {
             "shoulder_retraction": {
                 "joints": ("hip", "shoulder", "elbow"),
                 "correct_range": (70, 120),
-                "error_name": "nie spięte barki (no_retraction)",
+                "error_name": "nie spięte barki (shoulders_not_retracted)",
             },
         },
         "rep_phases": {
@@ -656,19 +879,48 @@ EXERCISE_CLASSES = {
     # -------------------------------------------------------
     # 18. HIP THRUST
     # -------------------------------------------------------
+    # UWAGA: użytkownik nie wymienił "setup" w swojej liście, ale klasa
+    # setup jest niezbędna w przepływie. Dodano klasę 0 = setup automatycznie.
     "hip_thrust": {
         "labels": {
             0: "setup",
             1: "correct",
-            2: "banana_back",
-            3: "half_rep_top",
-            4: "half_rep_bottom",
-            5: "feet_too_close",
-            6: "feet_too_far",
+            2: "arching_back",
+            3: "half_rep_bottom",
+            4: "half_rep_top",
+            5: "foot_too_close_hips",
         },
-        "num_classes": 7,
-        "angle_rules": {},
-        "rep_phases": {},
+        "num_classes": 6,
+        "key_landmarks": {
+            "left_shoulder": 3,  "right_shoulder": 4,
+            "left_hip": 9,       "right_hip": 10,
+            "left_knee": 11,     "right_knee": 12,
+            "left_ankle": 13,    "right_ankle": 14,
+            "sternum": 19,       "mid_hip": 20,
+        },
+        "angle_rules": {
+            "hip_extension": {
+                "joints": ("shoulder", "hip", "knee"),
+                "correct_range_top": (160, 180),
+                "correct_range_bottom": (90, 130),
+                "error_name": "niepełny zakres ruchu (hip)",
+            },
+            "knee_angle": {
+                "joints": ("hip", "knee", "ankle"),
+                "correct_range_top": (80, 110),
+                "error_name": "stopy za blisko/daleko (foot_too_close_hips)",
+            },
+            "back_alignment": {
+                "joints": ("sternum", "mid_hip", "knee"),
+                "correct_range": (155, 180),
+                "error_name": "wygięte plecy (arching_back)",
+            },
+        },
+        "rep_phases": {
+            "angle_joint": ("shoulder", "hip", "knee"),
+            "up_threshold": 155,
+            "down_threshold": 115,
+        },
     },
 
     # -------------------------------------------------------

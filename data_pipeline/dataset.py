@@ -272,10 +272,15 @@ def load_dataset(exercise: str = ACTIVE_EXERCISE,
             if not os.path.exists(label_dir):
                 continue
 
-        npy_files = sorted([f for f in os.listdir(label_dir) if f.endswith(".npy")])
+        # Szukaj .npy rekurencyjnie (obsługuje podkatalogi jak IMG_xxxx)
+        npy_files = []
+        for root, dirs, files in os.walk(label_dir):
+            for f in sorted(files):
+                if f.endswith(".npy"):
+                    npy_files.append(os.path.join(root, f))
 
         for npy_file in npy_files:
-            keypoints = np.load(os.path.join(label_dir, npy_file))
+            keypoints = np.load(npy_file)
 
             # Sprawdź czy plik nie jest pusty (Błąd MediaPipe w wycięciu sylwetki)
             if len(keypoints.shape) < 3 or keypoints.shape[0] == 0:
