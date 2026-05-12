@@ -271,7 +271,11 @@ def convert_via_keras_mirror(model: TemporalCNN, tflite_path: str,
     - Smoke test ZAWSZE przechodzi na CPU TFLite
     - Plik kompatybilny z CPU TFLite, GPU delegate i NNAPI
 
-    Wymaga:
+    Wymaga (Colab — sprawdzona konfiguracja):
+        pip uninstall -y jax jaxlib   # Colab forsuje ml_dtypes>=0.5, TF 2.18 chce <0.5
+        pip install tensorflow==2.18.0 tf-keras==2.18.0
+
+    Plus:
     - tf-keras (Keras 2.x legacy stack — TF 2.18+ ma bug w Keras 3.x dla from_keras_model)
     - env var TF_USE_LEGACY_KERAS=1 ustawiamy w funkcji
     """
@@ -279,10 +283,24 @@ def convert_via_keras_mirror(model: TemporalCNN, tflite_path: str,
 
     try:
         import tensorflow as tf
+    except ValueError as e:
+        if "ml_dtypes" in str(e):
+            raise RuntimeError(
+                "Konflikt ml_dtypes — najprawdopodobniej masz zainstalowany JAX "
+                "(Colab fabrycznie) który forsuje ml_dtypes>=0.5, a TF 2.18 chce <0.5.\n"
+                "Fix: pip uninstall -y jax jaxlib  →  Restart runtime  →  uruchom ponownie."
+            ) from e
+        raise
+    except ImportError as e:
+        raise ImportError(
+            "Brak tensorflow: pip install tensorflow==2.18.0 tf-keras==2.18.0"
+        ) from e
+
+    try:
         import tf_keras as keras
     except ImportError as e:
         raise ImportError(
-            "Ścieżka keras_mirror wymaga: pip install tensorflow tf-keras"
+            "Brak tf-keras (Keras 2.x): pip install tf-keras==2.18.0"
         ) from e
 
     precision = "FP16 weight-only" if fp16 else "FP32"
