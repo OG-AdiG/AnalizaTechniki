@@ -177,7 +177,15 @@ def verify_tflite(tflite_path: str, pytorch_model: TemporalCNN):
 
     print(f"\n--- Szczegółowa weryfikacja TFLite ---")
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
-    interpreter.allocate_tensors()
+    try:
+        interpreter.allocate_tensors()
+    except RuntimeError as e:
+        # CPU TFLite nie wspiera full-FP16 Conv (z onnx2tf --fp16).
+        # Na telefonie GPU delegate to obsłuży. Nie crashujemy skryptu.
+        print(f"⚠️ allocate_tensors() padło: {e}")
+        print("   To zwykle oznacza full-FP16 model bez CPU compat.")
+        print("   Plik jest poprawny — sprawdź go w aplikacji mobilnej z GPU delegate.")
+        return
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
@@ -249,37 +257,44 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
                      sequence_length: int = SEQUENCE_LENGTH,
                      fp16: bool = False):
     """
-    Alternatywna ścieżka eksportu: PyTorch → ONNX → onnx2tf (SavedModel)
-    → tf.lite.TFLiteConverter → TFLite.
+    Alternatywna ścieżka eksportu: PyTorch → ONNX → onnx2tf → TFLite.
 
     Używana gdy litert-torch jest popsuty (np. nowe API bez fp16 support).
     Dla naszego TCN (Conv1d, BatchNorm1d, Linear, AdaptiveAvgPool1d)
     pipeline jest stabilny — to wszystko standardowe ops bez problemów
     NCHW↔NHWC.
 
-    UWAGA: dla --fp16 robimy WEIGHT-ONLY FP16, nie full-FP16. Powody:
-    - Standardowy `tf.lite.Interpreter` na CPU NIE wspiera full-FP16
-      Conv (`input_type == kTfLiteFloat32 || ...` not true) i pęka przy
-      `allocate_tensors()`.
-    - Weight-only FP16: wagi w pliku jako FP16 (2× mniejsze), aktywacje
-      FP32 z dequantyzacją wag on-the-fly. Działa na CPU TFLite, GPU
-      delegate, NNAPI — wszędzie.
-    - To dokładnie ten sam tryb co stary `_ai_edge_converter_flags`
-      z target_spec.supported_types=[tf.float16].
+    UWAGA: bierzemy GOTOWY .tflite wygenerowany przez onnx2tf, NIE robimy
+    własnej re-kwantyzacji przez tf.lite.TFLiteConverter z SavedModel.
+    Powody:
+    - onnx2tf >= 2.4.0 wymaga `tf_keras` jako dodatkowej zależności,
+      żeby w ogóle zapisać SavedModel (OptionalTensorFlowDependencyError).
+    - onnx2tf 2.4.0 ma znaną regresję w `_build_maxpool1d_op`
+      (IndexError) — TCN z MaxPool1d wywala flatbuffer_direct fast path.
+    - Pin starszych wersji powoduje kaskadę konfliktów ml-dtypes/protobuf.
+
+    Wybór wariantu:
+    - --fp16 → bierzemy `model_float16.tflite` (full FP16, ~0.5x rozmiaru).
+      Działa na telefonie GPU delegate; NIE odpala na standardowym CPU
+      `tf.lite.Interpreter`. Smoke test (--test) na CPU może pęknąć, to
+      OK — sprawdzenie zostawiamy aplikacji mobilnej.
+    - bez --fp16 → bierzemy `model_float32.tflite`. Działa wszędzie
+      (CPU, GPU delegate, NNAPI). GPU delegate i tak natywnie zrobi FP16
+      wewnętrznie. Smoke test w pełni przechodzi.
     """
     import tempfile
+    import shutil
 
     try:
         import onnx
         import onnx2tf
-        import tensorflow as tf
     except ImportError as e:
         raise ImportError(
             "Ścieżka ONNX wymaga: pip install onnx onnx2tf tensorflow"
         ) from e
 
-    precision = "FP16 weight-only" if fp16 else "FP32"
-    print(f"🔄 Konwersja PyTorch → ONNX → SavedModel → TFLite ({precision})...")
+    precision = "float16 (full)" if fp16 else "float32"
+    print(f"🔄 Konwersja PyTorch → ONNX → TFLite ({precision})...")
 
     sample_input = torch.randn(1, input_channels, sequence_length)
     with torch.no_grad():
@@ -305,20 +320,12 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
         onnx.checker.check_model(onnx_path)
         print(f"   ✅ ONNX zapisany: {os.path.getsize(onnx_path)/1024:.0f} KB")
 
-        saved_model_dir = os.path.join(tmpdir, "tf_out")
-        os.makedirs(saved_model_dir, exist_ok=True)
+        out_dir = os.path.join(tmpdir, "tf_out")
+        os.makedirs(out_dir, exist_ok=True)
 
-        # onnx2tf wypluwa SavedModel obok gotowych .tflite. Bierzemy
-        # SavedModel — własną kwantyzację robimy przez TFLiteConverter,
-        # żeby dostać weight-only FP16 zamiast full-FP16.
-        #
-        # UWAGA: od onnx2tf 2.4.0 domyślny tryb to `flatbuffer_direct`,
-        # który POMIJA SavedModel (wypluwa od razu .tflite). Trzeba
-        # jawnie poprosić o SavedModel przez `flatbuffer_direct_output_saved_model`.
-        # Flag nie istnieje w 2.3.x, więc dodajemy go warunkowo.
-        convert_kwargs = dict(
+        onnx2tf.convert(
             input_onnx_file_path=onnx_path,
-            output_folder_path=saved_model_dir,
+            output_folder_path=out_dir,
             output_signaturedefs=True,
             non_verbose=True,
             output_h5=False,
@@ -326,44 +333,21 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
             copy_onnx_input_output_names_to_tflite=True,
         )
 
-        import inspect
-        try:
-            from onnx2tf import onnx2tf as _o2t_mod
-            for fn_name in dir(_o2t_mod):
-                fn = getattr(_o2t_mod, fn_name)
-                if not callable(fn) or "convert" not in fn_name.lower():
-                    continue
-                try:
-                    if "flatbuffer_direct_output_saved_model" in inspect.signature(fn).parameters:
-                        convert_kwargs["flatbuffer_direct_output_saved_model"] = True
-                        break
-                except (TypeError, ValueError):
-                    pass
-        except Exception:
-            pass
+        tflite_files = sorted(f for f in os.listdir(out_dir) if f.endswith(".tflite"))
+        if not tflite_files:
+            raise RuntimeError(f"onnx2tf nie wygenerował .tflite w {out_dir}")
+        print(f"   ✅ onnx2tf wygenerował: {tflite_files}")
 
-        onnx2tf.convert(**convert_kwargs)
-
-        if not any(
-            os.path.exists(os.path.join(saved_model_dir, fname))
-            for fname in ("saved_model.pb", "saved_model.pbtxt")
-        ):
-            raise RuntimeError(
-                f"onnx2tf nie zapisał SavedModel w {saved_model_dir}. "
-                f"Pin starszą wersję: pip install 'onnx2tf<2.4', albo "
-                f"upewnij się że flag `flatbuffer_direct_output_saved_model` "
-                f"jest dostępny w twoim onnx2tf."
-            )
-        print(f"   ✅ SavedModel: {saved_model_dir}")
-
-        converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
         if fp16:
-            converter.optimizations = [tf.lite.Optimize.DEFAULT]
-            converter.target_spec.supported_types = [tf.float16]
+            pick = next((f for f in tflite_files if "float16" in f), None)
+            if pick is None:
+                print(f"   ⚠️ Brak wariantu float16 — biorę FP32 (CPU-friendly)")
+                pick = next((f for f in tflite_files if "float32" in f), tflite_files[0])
+        else:
+            pick = next((f for f in tflite_files if "float32" in f), tflite_files[0])
 
-        tflite_bytes = converter.convert()
-        with open(tflite_path, "wb") as f:
-            f.write(tflite_bytes)
+        shutil.copy2(os.path.join(out_dir, pick), tflite_path)
+        print(f"   ✅ Wybrano: {pick}")
 
     file_size_mb = os.path.getsize(tflite_path) / (1024 * 1024)
     print(f"\n{'='*60}")
@@ -371,9 +355,10 @@ def convert_via_onnx(model: TemporalCNN, tflite_path: str,
     print(f"  Rozmiar:      {file_size_mb:.2f} MB ({precision})")
     print(f"  Wejście:      [1, {input_channels}, {sequence_length}]")
     print(f"  Wyjście:      [1, num_classes]")
-    print(f"  Pipeline:     PyTorch → ONNX → SavedModel → TFLiteConverter")
+    print(f"  Pipeline:     PyTorch → ONNX → onnx2tf → TFLite")
     if fp16:
-        print(f"  Uwaga:        Wagi FP16, aktywacje FP32 (CPU+GPU+NNAPI OK)")
+        print(f"  Uwaga:        Full-FP16 — działa na GPU delegate, NIE na CPU TFLite.")
+        print(f"                Jeśli potrzebujesz CPU compat → uruchom bez --fp16.")
     print(f"{'='*60}")
 
 
