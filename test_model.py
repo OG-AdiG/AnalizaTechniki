@@ -42,9 +42,10 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model.config import (
     EXERCISE_CLASSES, SEQUENCE_LENGTH, INPUT_CHANNELS, POSE_MODEL_DIR,
-    MODELS_DIR,
+    MODELS_DIR, ISOMETRIC_EXERCISES,
 )
 from model.rep_classifier import RepClassifier
+from model.isometric_classifier import IsometricClassifier, create_classifier
 from model.exercise_detector import ExerciseDetector
 # Import z pose_training — eksportowane przez video_to_keypoints
 from video_to_keypoints import (
@@ -154,6 +155,92 @@ def draw_summary_bar(frame, classifier):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, last_color, 1)
 
 
+def draw_isometric_timeline(frame, classifier, max_show=8):
+    """Rysuje listę ostatnich okien klasyfikacji (prawy panel) — analog draw_rep_history."""
+    h, w = frame.shape[:2]
+    x_start = w - 280
+    y_start = 10
+
+    timeline = classifier.timeline
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x_start - 10, y_start - 5),
+                  (w - 5, y_start + 30 + min(len(timeline), max_show) * 28),
+                  (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+    cv2.putText(frame, "Timeline (sliding window):", (x_start, y_start + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_WHITE, 1)
+
+    visible = timeline[-max_show:]
+    for i, entry in enumerate(visible):
+        y = y_start + 38 + i * 28
+        name = entry.get("class_name", "?")
+        conf = entry.get("confidence", 0)
+        t = entry.get("time", 0.0)
+
+        if name == "correct":
+            color = COLOR_CORRECT
+            icon = "OK"
+        elif name == "setup":
+            color = COLOR_SETUP
+            icon = "SU"
+        else:
+            color = COLOR_ERROR
+            icon = "!!"
+
+        text = f"[{t:5.1f}s] [{icon}] {name} ({conf:.0%})"
+        cv2.putText(frame, text, (x_start, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1)
+
+
+def draw_isometric_summary_bar(frame, classifier):
+    """Rysuje pasek podsumowania na dole — wersja dla ćwiczeń izometrycznych (czas)."""
+    h, w = frame.shape[:2]
+    summary = classifier.get_summary()
+    state = classifier.get_current_state()
+
+    cv2.rectangle(frame, (0, h - 90), (w, h), COLOR_BLACK, -1)
+
+    current_class = state.get("current_class", "setup")
+    current_conf = state.get("current_confidence", 0.0)
+    buf = state.get("buffered_frames", 0)
+    total_time = state.get("total_time", 0.0)
+    exercise_time = state.get("exercise_time", 0.0)
+
+    # Linia 1: bieżąca klasa
+    if current_class == "correct":
+        cur_color = COLOR_CORRECT
+    elif current_class == "setup":
+        cur_color = COLOR_SETUP
+    else:
+        cur_color = COLOR_ERROR
+
+    status = (f"Klasa: {current_class.upper()} ({current_conf:.0%}) | "
+              f"Czas cwiczenia: {exercise_time:.1f}s / {total_time:.1f}s | Bufor: {buf} kl.")
+    cv2.putText(frame, status, (10, h - 62),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, cur_color, 1)
+
+    # Linia 2: czas per klasa
+    time_per_class = summary.get("time_per_class", {})
+    correct_time = summary.get("correct_time", 0.0)
+    acc = summary.get("accuracy", 0.0)
+
+    if time_per_class:
+        sum_text = f"Correct: {correct_time:.1f}s ({acc:.0%})"
+        errors = summary.get("error_time", {})
+        if errors:
+            top_errors = sorted(errors.items(), key=lambda x: -x[1])[:3]
+            err_str = ", ".join(f"{k}:{v:.1f}s" for k, v in top_errors)
+            sum_text += f" | Bledy: {err_str}"
+    else:
+        sum_text = "Oczekiwanie na klasyfikacje (sliding window)..."
+
+    color = COLOR_CORRECT if acc > 0.7 else COLOR_ERROR if time_per_class else COLOR_PENDING
+    cv2.putText(frame, sum_text, (10, h - 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Testowanie modelu na wideo (per-rep)")
     parser.add_argument("--video", type=str, required=True, help="Ścieżka do filmu")
@@ -191,13 +278,16 @@ def main():
         print(f"  Klasyfikacja techniki wyłączona (tylko zliczanie repów)")
         args.model = None
 
-    # Inicjalizacja RepClassifier
-    classifier = RepClassifier(
+    # Inicjalizacja klasyfikatora — automatycznie wybiera Rep vs Isometric
+    # na podstawie EXERCISE_CLASSES[exercise]["exercise_type"]
+    classifier = create_classifier(
         exercise=exercise,
         model_path=args.model,
         model_type=model_type,
     )
-    print(f"🏋️ Ćwiczenie: {exercise}")
+    is_isometric = isinstance(classifier, IsometricClassifier)
+    mode_str = "IZOMETRYCZNE (czas)" if is_isometric else "POWTORZENIOWE (repy)"
+    print(f"🏋️ Ćwiczenie: {exercise}  [{mode_str}]")
     print(f"📋 Klasy: {list(classifier.labels.values())}")
 
     # Ładowanie modelu SimCC (pose estimation)
@@ -315,27 +405,35 @@ def main():
                             detected = exercise_detector.detect(keypoints_21)
                             if detected != "unknown" and detected != exercise:
                                 exercise = detected
-                                classifier = RepClassifier(exercise, args.model, model_type)
-                                print(f"🔄 Wykryto ćwiczenie: {exercise}")
+                                classifier = create_classifier(exercise, args.model, model_type)
+                                is_isometric = isinstance(classifier, IsometricClassifier)
+                                mode_str = "izometryczne" if is_isometric else "powtorzeniowe"
+                                print(f"🔄 Wykryto ćwiczenie: {exercise} ({mode_str})")
                 else:
                     cv2.putText(frame, "BRAK POZY", (w // 2 - 100, 50),
                                 font, 1, COLOR_ERROR, 2)
 
-                # === KROK 3: Per-rep klasyfikacja ===
+                # === KROK 3: Klasyfikacja (per-rep lub sliding window) ===
                 rep_result = classifier.process_frame(keypoints_21)
 
                 if rep_result is not None:
-                    # Nowy rep — flash efekt
                     new_rep_flash_frames = 15
                     name = rep_result["class_name"]
                     conf = rep_result["confidence"]
-                    num = rep_result["rep_number"]
-                    print(f"  🏋️ Rep {num}: {name} ({conf:.0%})")
+                    if is_isometric:
+                        t = rep_result.get("time", 0.0)
+                        print(f"  ⏱ [{t:.1f}s] {name} ({conf:.0%})")
+                    else:
+                        num = rep_result["rep_number"]
+                        print(f"  🏋️ Rep {num}: {name} ({conf:.0%})")
 
-                # Flash efekt nowego repa
+                # Flash efekt nowego repa / okna
                 if new_rep_flash_frames > 0:
                     alpha = new_rep_flash_frames / 15.0
-                    last_result = classifier.rep_results[-1] if classifier.rep_results else None
+                    if is_isometric:
+                        last_result = classifier.timeline[-1] if classifier.timeline else None
+                    else:
+                        last_result = classifier.rep_results[-1] if classifier.rep_results else None
                     if last_result:
                         flash_color = COLOR_CORRECT if last_result["class_name"] == "correct" else COLOR_ERROR
                         overlay = frame.copy()
@@ -344,11 +442,15 @@ def main():
                     new_rep_flash_frames -= 1
 
                 # === RYSOWANIE UI ===
-                draw_rep_history(frame, classifier.rep_results)
-                draw_summary_bar(frame, classifier)
+                if is_isometric:
+                    draw_isometric_timeline(frame, classifier)
+                    draw_isometric_summary_bar(frame, classifier)
+                    title = f"SEE Trainer | {exercise.upper()} | Time-based Analysis"
+                else:
+                    draw_rep_history(frame, classifier.rep_results)
+                    draw_summary_bar(frame, classifier)
+                    title = f"SEE Trainer | {exercise.upper()} | Per-Rep Analysis"
 
-                # Tytuł
-                title = f"SEE Trainer | {exercise.upper()} | Per-Rep Analysis"
                 cv2.putText(frame, title, (10, 30), font, 0.6, COLOR_WHITE, 1)
 
                 cv2.imshow("SEE Trainer - Per-Rep Analysis", frame)
@@ -365,13 +467,33 @@ def main():
     print("📊 PODSUMOWANIE SETA")
     print("=" * 60)
     print(f"  Ćwiczenie:   {summary['exercise']}")
-    print(f"  Łączne repy: {summary['total_reps']}")
-    print(f"  Poprawne:    {summary['correct_reps']}")
-    print(f"  Dokładność:  {summary['accuracy']:.0%}")
-    if summary["error_breakdown"]:
-        print(f"  Błędy:")
-        for error_name, count in summary["error_breakdown"].items():
-            print(f"    - {error_name}: {count}")
+
+    if is_isometric:
+        # Format: "L-sit 20s: 10s correct, 10s bent_legs"
+        print(f"  Typ:         izometryczne (czas)")
+        print(f"  Czas total:  {summary['total_time']}s")
+        print(f"  Czas cwicz:  {summary['exercise_time']}s (bez setupu)")
+        print(f"  Correct:     {summary['correct_time']}s ({summary['accuracy']:.0%})")
+        time_per_class = summary.get("time_per_class", {})
+        if time_per_class:
+            print(f"  Czas per klasa:")
+            for cls, t in sorted(time_per_class.items(), key=lambda x: -x[1]):
+                print(f"    - {cls}: {t}s")
+        # Krótkie zdanie końcowe
+        parts = [f"{t}s {cls}" for cls, t in
+                 sorted(time_per_class.items(), key=lambda x: -x[1])]
+        if parts:
+            print(f"\n  ➜ {summary['exercise']} {summary['exercise_time']}s: "
+                  + ", ".join(parts))
+    else:
+        print(f"  Typ:         powtorzeniowe")
+        print(f"  Łączne repy: {summary['total_reps']}")
+        print(f"  Poprawne:    {summary['correct_reps']}")
+        print(f"  Dokładność:  {summary['accuracy']:.0%}")
+        if summary["error_breakdown"]:
+            print(f"  Błędy:")
+            for error_name, count in summary["error_breakdown"].items():
+                print(f"    - {error_name}: {count}")
     print("=" * 60)
 
 
