@@ -191,6 +191,11 @@ def process_directory(input_dir: str, output_dir: str):
     Przetwarza katalog z plikami keypointów (.npy lub .csv).
     Normalizuje i zapisuje do output_dir.
 
+    Obsługuje struktury zagnieżdżone — jeśli pliki .npy znajdują się
+    w podfolderach (np. input_dir/IMG_9279/*.npy), zostaną znalezione
+    rekurencyjnie, a nazwa podfolderu zostanie dodana jako prefix
+    do pliku wyjściowego, aby uniknąć konfliktów nazw.
+
     Args:
         input_dir: Katalog wejściowy z plikami keypointów
         output_dir: Katalog wyjściowy na znormalizowane pliki .npy
@@ -198,24 +203,42 @@ def process_directory(input_dir: str, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
 
     supported_ext = (".npy", ".csv")
-    files = [f for f in os.listdir(input_dir)
-             if f.lower().endswith(supported_ext)]
 
-    if not files:
+    # Zbierz pliki rekurencyjnie za pomocą os.walk
+    all_files = []  # lista krotek: (pełna_ścieżka, nazwa_wyjściowa)
+    for root, _dirs, filenames in os.walk(input_dir):
+        for fname in filenames:
+            if fname.lower().endswith(supported_ext):
+                filepath = os.path.join(root, fname)
+
+                # Wyznacz ścieżkę względną do input_dir
+                rel_path = os.path.relpath(root, input_dir)
+
+                if rel_path == ".":
+                    # Plik bezpośrednio w input_dir — oryginalna nazwa
+                    output_name = os.path.splitext(fname)[0] + ".npy"
+                else:
+                    # Plik w podfolderze — prefix z nazw podfolderów
+                    # np. IMG_9279/keypoints.npy → IMG_9279_keypoints.npy
+                    prefix = rel_path.replace(os.sep, "_")
+                    output_name = f"{prefix}_{os.path.splitext(fname)[0]}.npy"
+
+                all_files.append((filepath, output_name))
+
+    if not all_files:
         print(f"⚠ Brak plików keypointów w: {input_dir}")
         return
 
-    print(f"📂 Znaleziono {len(files)} plików w: {input_dir}")
+    print(f"📂 Znaleziono {len(all_files)} plików w: {input_dir}"
+          f" (rekurencyjnie)" if len(all_files) > 0 else "")
 
-    for filename in sorted(files):
-        filepath = os.path.join(input_dir, filename)
-        output_name = os.path.splitext(filename)[0] + ".npy"
+    for filepath, output_name in sorted(all_files, key=lambda x: x[1]):
         output_path = os.path.join(output_dir, output_name)
 
         try:
-            print(f"  🔄 Przetwarzanie: {filename}...", end=" ")
+            print(f"  🔄 Przetwarzanie: {output_name}...", end=" ")
 
-            if filename.endswith(".npy"):
+            if filepath.endswith(".npy"):
                 keypoints = load_keypoints_npy(filepath)
             else:
                 keypoints = load_keypoints_csv(filepath)
